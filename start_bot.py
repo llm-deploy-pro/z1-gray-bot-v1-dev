@@ -25,7 +25,7 @@ def main():
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     webhook_url = os.getenv('WEBHOOK_URL')
     webhook_listen = os.getenv('WEBHOOK_LISTEN_IP', '0.0.0.0')
-    webhook_port = int(os.getenv('WEBHOOK_PORT', '8443'))
+    webhook_port = int(os.getenv('WEBHOOK_PORT', '10000'))  # 默认使用Render支持的10000端口
     
     # 确保存储目录存在
     Path('./storage').mkdir(exist_ok=True)
@@ -41,15 +41,22 @@ def main():
     
     # 设置Webhook
     mode = os.getenv('APP_ENV', 'development')
+    logger.info(f"Running in {mode} mode")
     if mode == 'production':
+        # 提取webhook路径
+        webhook_path = webhook_url.split('/')[-1] if webhook_url else 'webhook'
+        logger.info(f"Starting webhook on port {webhook_port}, path: {webhook_path}")
+        
+        # 在生产环境中使用webhook
         application.run_webhook(
             listen=webhook_listen,
             port=webhook_port,
-            url_path=webhook_url.split('/')[-1], 
+            url_path=webhook_path,
             webhook_url=webhook_url
         )
     else:
         # 开发模式下使用轮询
+        logger.info("Starting polling mode")
         application.run_polling()
 
 if __name__ == '__main__':
