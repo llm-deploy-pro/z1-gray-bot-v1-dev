@@ -1,9 +1,9 @@
-import asyncio
 import logging
 import os
+import sys
 from pathlib import Path
 
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler
 from dotenv import load_dotenv
 
 # 加载.env文件中的环境变量
@@ -20,44 +20,53 @@ logger = logging.getLogger(__name__)
 from handlers import step_1
 
 def main():
-    """启动机器人"""
-    # 从环境变量获取配置
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    webhook_url = os.getenv('WEBHOOK_URL')
-    webhook_listen = os.getenv('WEBHOOK_LISTEN_IP', '0.0.0.0')
-    webhook_port = int(os.getenv('WEBHOOK_PORT', '10000'))  # 默认使用Render支持的10000端口
-    
-    # 确保存储目录存在
+    """主函数"""
+    # 确保目录存在
     Path('./storage').mkdir(exist_ok=True)
     Path('./logs').mkdir(exist_ok=True)
     
-    # 创建应用实例
+    # 配置
+    token = os.getenv('TELEGRAM_BOT_TOKEN')
+    webhook_url = os.getenv('WEBHOOK_URL')
+    mode = os.getenv('APP_ENV', 'development')
+    
+    # 创建应用
     application = Application.builder().token(token).build()
     
-    # 注册命令处理器
+    # 注册处理程序
     application.add_handler(CommandHandler("start", step_1.start_step_1_flow))
     
-    # TODO: 注册其他处理器
-    
-    # 设置Webhook
-    mode = os.getenv('APP_ENV', 'development')
+    # 初始化
     logger.info(f"Running in {mode} mode")
+    
+    # 根据模式启动
     if mode == 'production':
-        # 提取webhook路径
-        webhook_path = webhook_url.split('/')[-1] if webhook_url else 'webhook'
-        logger.info(f"Starting webhook on port {webhook_port}, path: {webhook_path}")
+        # Webhook模式
+        webhook_port = int(os.getenv('WEBHOOK_PORT', '10000'))
+        webhook_path = 'webhook'
+        webhook_listen = os.getenv('WEBHOOK_LISTEN_IP', '0.0.0.0')
         
-        # 在生产环境中使用webhook
+        logger.info(f"Starting webhook on {webhook_listen}:{webhook_port}")
+        logger.info(f"Webhook URL: {webhook_url}")
+        
+        # 在webhook模式下启动
         application.run_webhook(
             listen=webhook_listen,
             port=webhook_port,
             url_path=webhook_path,
-            webhook_url=webhook_url
+            webhook_url=webhook_url,
+            drop_pending_updates=True
         )
     else:
-        # 开发模式下使用轮询
+        # 轮询模式
         logger.info("Starting polling mode")
-        application.run_polling()
+        application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        sys.exit(1)

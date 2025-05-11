@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: z1-gray-bot-v1-dev
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start_bot.py
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: WEBHOOK_PORT
+        value: 10000
+      - key: WEBHOOK_LISTEN_IP
+        value: 0.0.0.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+    healthCheckPath: /webhook  # 用于检查服务是否运行 
