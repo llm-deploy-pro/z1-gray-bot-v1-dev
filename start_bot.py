@@ -1,18 +1,16 @@
-# start_bot.py (Simplified Webhook Path for Debugging)
+# start_bot.py (Using a simple, fixed webhook path: "webhook")
 
 import logging
 import os
 import asyncio
-import hashlib # Still imported, though hash might not be used in this test
+import hashlib # Still imported, but the hash itself is not directly used for WEBHOOK_PATH_SEGMENT
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from handlers import step_1
 
 # --- CRITICAL ENVIRONMENT VARIABLE CHECK AT THE VERY TOP ---
-logger_env_debug = logging.getLogger("ENV_DEBUG_VERY_TOP")
-# Ensure logging is configured to capture this, or use print for absolute certainty in Render logs
-# Forcing print here for maximum visibility in Render logs if logging isn't fully set up yet:
+# Using print for Render logs to ensure visibility before full logging setup
 print(f"CRITICAL_ENV_PRINT_AT_TOP: RENDER_EXTERNAL_URL='{os.environ.get('RENDER_EXTERNAL_URL')}'")
 print(f"CRITICAL_ENV_PRINT_AT_TOP: APP_ENV='{os.environ.get('APP_ENV')}'")
 print(f"CRITICAL_ENV_PRINT_AT_TOP: PORT='{os.environ.get('PORT')}'")
@@ -48,10 +46,20 @@ else: # Development
     WEBHOOK_URL_BASE = WEBHOOK_URL_BASE_FROM_ENV if WEBHOOK_URL_BASE_FROM_ENV else "http://localhost.placeholder.dev"
     logger.info(f"Development mode. WEBHOOK_URL_BASE resolved to: {WEBHOOK_URL_BASE}")
 
-# --- MODIFICATION FOR DEBUGGING: SIMPLIFIED WEBHOOK PATH ---
-WEBHOOK_PATH_SEGMENT = "" # Set to empty string for testing root path
-logger.info(f"DEBUGGING: Using EMPTY webhook path segment: '{WEBHOOK_PATH_SEGMENT}'")
-FULL_WEBHOOK_URL_FOR_TELEGRAM = WEBHOOK_URL_BASE.rstrip('/') # No path segment added
+# --- MODIFICATION: Use a simple, fixed webhook path ---
+WEBHOOK_PATH_SEGMENT = "webhook" # Using "webhook" as the fixed path segment
+logger.info(f"Using fixed webhook path segment: '{WEBHOOK_PATH_SEGMENT}'")
+# Ensure FULL_WEBHOOK_URL_FOR_TELEGRAM has a leading slash for the path segment
+FULL_WEBHOOK_URL_FOR_TELEGRAM = f"{WEBHOOK_URL_BASE.rstrip('/')}/{WEBHOOK_PATH_SEGMENT.lstrip('/')}"
+if not FULL_WEBHOOK_URL_FOR_TELEGRAM.split(WEBHOOK_URL_BASE.rstrip('/'))[-1].startswith('/'):
+     # This check is a bit complex, simpler: ensure path segment itself does not start with / when constructing
+     # For f"{base}/{segment}", if segment is "webhook", result is "base/webhook"
+     # If segment is "/webhook", result is "base//webhook" (bad) or "base/webhook" (if rstrip works well)
+     # Let's ensure WEBHOOK_PATH_SEGMENT itself doesn't have leading/trailing slashes for run_webhook's url_path
+     WEBHOOK_PATH_SEGMENT = WEBHOOK_PATH_SEGMENT.strip('/') # Ensure no leading/trailing slashes for url_path
+     FULL_WEBHOOK_URL_FOR_TELEGRAM = f"{WEBHOOK_URL_BASE.rstrip('/')}/{WEBHOOK_PATH_SEGMENT}"
+
+
 # --- END OF MODIFICATION ---
 
 PORT = int(os.environ.get("PORT", os.environ.get("WEBHOOK_PORT", 8443)))
@@ -59,12 +67,12 @@ ALLOWED_UPDATES_TYPES_STR_LIST = ["message", "callback_query"]
 
 
 def main() -> None:
-    logger.info(f"--- Starting Z1-Gray Bot (DEBUGGING WEBHOOK PATH) ---")
+    logger.info(f"--- Starting Z1-Gray Bot (Fixed Path: /{WEBHOOK_PATH_SEGMENT}) ---")
     logger.info(f"Final APP_ENV: {APP_ENV}")
     logger.info(f"Final PORT: {PORT}")
     logger.info(f"Final WEBHOOK_URL_BASE for logic: {WEBHOOK_URL_BASE}")
-    logger.info(f"Final FULL_WEBHOOK_URL_FOR_TELEGRAM (Simplified): {FULL_WEBHOOK_URL_FOR_TELEGRAM}")
-    logger.info(f"Final WEBHOOK_PATH_SEGMENT for run_webhook (Simplified): '{WEBHOOK_PATH_SEGMENT}'")
+    logger.info(f"Final FULL_WEBHOOK_URL_FOR_TELEGRAM: {FULL_WEBHOOK_URL_FOR_TELEGRAM}")
+    logger.info(f"Final WEBHOOK_PATH_SEGMENT for run_webhook: '{WEBHOOK_PATH_SEGMENT}'")
     logger.info(f"Bot Token: ...{BOT_TOKEN[-4:]}")
 
     application = Application.builder().token(BOT_TOKEN).build()
@@ -79,7 +87,7 @@ def main() -> None:
 
     try:
         if APP_ENV == "production":
-            logger.info(f"Production mode: Calling application.run_webhook() with simplified path.")
+            logger.info(f"Production mode: Calling application.run_webhook() with path '/{WEBHOOK_PATH_SEGMENT}'.")
             logger.info(
                 f"  To manually verify (if issues persist):\n"
                 f"  curl -F \"url={FULL_WEBHOOK_URL_FOR_TELEGRAM}\" -F \"allowed_updates={ALLOWED_UPDATES_TYPES_STR_LIST}\" https://api.telegram.org/bot{BOT_TOKEN}/setWebhook"
@@ -87,8 +95,8 @@ def main() -> None:
             application.run_webhook(
                 listen=os.environ.get("WEBHOOK_LISTEN_IP", "0.0.0.0"),
                 port=PORT,
-                url_path=WEBHOOK_PATH_SEGMENT, # Now an empty string
-                webhook_url=FULL_WEBHOOK_URL_FOR_TELEGRAM,
+                url_path=WEBHOOK_PATH_SEGMENT, # Should be "webhook" (no leading/trailing slashes)
+                webhook_url=FULL_WEBHOOK_URL_FOR_TELEGRAM, # Should be "https://.../webhook"
                 allowed_updates=ALLOWED_UPDATES_TYPES_STR_LIST,
                 drop_pending_updates=True
             )
