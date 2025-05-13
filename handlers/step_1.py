@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import datetime
+import datetime # Still imported for other logging if needed, but not for the user-facing timestamp
 import hashlib # For the placeholder generate_user_secure_id
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -33,22 +33,26 @@ AWAITING_STEP_2_FROM_IGNORE = "AWAITING_STEP_2_FROM_IGNORE"
 STEP_1_DIAGNOSTIC_RUNNING = "STEP_1_DIAGNOSTIC_RUNNING"
 STEP_2_STARTED_ANALYSIS = "step_2_started_analysis"
 
-# --- ❗问题 3：统一 fallback 错误回复语句 ---
+# --- 统一 fallback 错误回复语句 ---
 async def send_system_error_reply(
-    target_object: Update | None, # Can be Update or query.message
+    target_object: Update | None, 
     context: ContextTypes.DEFAULT_TYPE,
     user_id: int | str = "Unknown",
     error_text: str = "An unexpected system error occurred. Please try the /start sequence again."
 ) -> None:
-    """Sends a standardized system error reply."""
     logger.error(f"Sending system error reply to user {user_id}: {error_text}")
     try:
+        # Prioritize replying to the original message context if available
+        reply_target = None
         if target_object and hasattr(target_object, 'message') and target_object.message: # For CallbackQuery
-             await target_object.message.reply_html(f"⚠️ <b>SYSTEM ERROR:</b>\n{error_text}")
+            reply_target = target_object.message
         elif target_object and hasattr(target_object, 'reply_html'): # For Message object in Update
-             await target_object.reply_html(f"⚠️ <b>SYSTEM ERROR:</b>\n{error_text}")
-        elif user_id != "Unknown" and context.bot: # Fallback to sending a new message if target_object is problematic
-            await context.bot.send_message(chat_id=user_id, text=f"⚠️ SYSTEM ERROR:\n{error_text}", parse_mode=ParseMode.HTML)
+            reply_target = target_object
+        
+        if reply_target and hasattr(reply_target, 'reply_html'):
+             await reply_target.reply_html(f"⚠️ <b>SYSTEM ERROR:</b>\n{error_text}")
+        elif user_id != "Unknown" and context.bot: # Fallback if no direct reply object
+            await context.bot.send_message(chat_id=user_id, text=f"⚠️ <b>SYSTEM ERROR:</b>\n{error_text}", parse_mode=ParseMode.HTML)
     except Exception as e_reply:
         logger.error(f"CRITICAL: Failed to send system error reply to user {user_id}: {e_reply}")
 
@@ -67,7 +71,6 @@ async def start_step_1_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     current_step = context.user_data.get("current_flow_step", "")
     entry_point_s2_stale = context.user_data.get("entry_point_s2", "")
 
-    # ❗问题1：/start 回退逻辑提示正确，但未真正“恢复流程” (改进提示，为未来恢复做铺垫)
     if update.message.text == "/start" and current_step.startswith("AWAITING_STEP_2_FROM_"):
         logger.warning(
             f"User {user_id} (State: {current_step}, Entry: {entry_point_s2_stale}) initiated /start while awaiting Step 2. "
@@ -77,14 +80,11 @@ async def start_step_1_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "⚠️ <b>System State Inconsistency Detected.</b>\n"
             "Your previous session was awaiting entry into Step ②. "
             "For now, we will restart the initialization sequence. "
-            "If this issue persists, please contact support."
-            # Future: "Alternatively, you can try to /resume_step2 if available."
+            # "If this issue persists, please contact support." # Kept for future reference
         )
-        # Clear stale state to ensure a clean Step 1 restart
         context.user_data.pop("current_flow_step", None)
         context.user_data.pop("entry_point_s2", None)
-        context.user_data.pop("risk_score", None) # Also clear risk_score if set
-        # Fall through to normal Step 1 start after this message
+        context.user_data.pop("risk_score", None)
         logger.info(f"User {user_id} stale AWAITING_STEP_2 state cleared by /start. Proceeding with fresh Step 1.")
 
     logger.info(f"User {user_id} ({user.username or 'N/A'}) started step_1_flow. Current step before: {current_step}")
@@ -92,20 +92,23 @@ async def start_step_1_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["secure_id"] = secure_id
 
     try:
-        # ... (Step 1 messages - no changes from previous version) ...
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         await update.message.reply_html("🔷 ACCESS NODE CONFIRMED\n→ PROTOCOL [Z1-GRAY_ΔPRIME] INITIALIZED")
         await asyncio.sleep(1.5)
-        timestamp_str = datetime.datetime.utcnow().strftime('%H:%M:%S.%f')[:-3] + ' UTC'
+        
+        # --- MODIFICATION: Removed user-facing timestamp ---
+        # timestamp_str = datetime.datetime.utcnow().strftime('%H:%M:%S.%f')[:-3] + ' UTC' # REMOVED
         message_text_2 = (
-            f"→ TIMESTAMP: {timestamp_str}\n"
+            # f"→ TIMESTAMP: {timestamp_str}\n" # REMOVED
             f"🔹 SECURE IDENTIFIER GENERATED\n"
             f"→ USER_SECURE_ID: <code>{secure_id}</code>\n"
             f"→ AUTH_LAYER: 2B | SYNC_STATUS: PENDING"
         )
+        # --- END OF MODIFICATION ---
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         await update.message.reply_html(message_text_2)
         await asyncio.sleep(2.7)
+        
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         await update.message.reply_html(
             "⚠️ INITIAL NODE ANALYSIS: CRITICAL WARNING\n"
@@ -113,19 +116,21 @@ async def start_step_1_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             "→ TRACE_SIGNAL: NON-STANDARD ALIGNMENT"
         )
         await asyncio.sleep(4.5)
+        
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         await update.message.reply_html(
             "🔒 SYSTEM ALERT: Your access node has entered a volatility state.\n"
             "→ Interruption may trigger node quarantine protocol."
         )
         await asyncio.sleep(3.2)
+        
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         await update.message.reply_html(
             "🧠 ACTION REQUIRED: Begin full TRACE_DIAGNOSTIC to determine node viability.\n"
             "→ Delayed response = elevated risk of deactivation"
         )
         await asyncio.sleep(2.8)
-        # ... (End of Step 1 messages) ...
+        
         keyboard = [
             [InlineKeyboardButton("🧪 RUN TRACE_DIAGNOSTIC NOW ⚡️", callback_data=CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN)],
             [InlineKeyboardButton("📄 VIEW SYSTEM PROTOCOL 📘", callback_data=CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW)],
@@ -150,7 +155,6 @@ async def s1_initiate_diagnostic_scan_callback(update: Update, context: ContextT
         return
     
     user_id = user.id
-    # ❗问题 4：日志记录没有跟踪 “按钮点击行为路径 + 时间”
     logger.info(f"BUTTON_CLICK: User {user_id} clicked {CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN} at {datetime.datetime.utcnow().isoformat()}Z")
     
     await query.answer("Processing...")
@@ -159,7 +163,7 @@ async def s1_initiate_diagnostic_scan_callback(update: Update, context: ContextT
         await query.message.reply_html("🔬 ANALYZING NODE STABILITY SIGNATURES...\nPLEASE STAND BY.")
         await asyncio.sleep(4.2)
         await query.message.reply_html("✅ <b>DIAGNOSTIC PHASE 1 COMPLETE.</b>")
-        await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING) # For Step 2 intro
+        await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
         await asyncio.sleep(0.8)
         await query.message.reply_html(
             "<b>ALIGNMENT ANOMALIES DETECTED</b>\n\n"
@@ -192,7 +196,11 @@ async def s1_view_protocol_overview_callback(update: Update, context: ContextTyp
         await query.edit_message_text(text="ACTION SELECTED: 📄 VIEW SYSTEM PROTOCOL 📘", reply_markup=None)
         protocol_text = (
             "📄 <b>System Protocol Overview</b> (Simplified Extract):\n\n"
-            "<i>All access nodes are subject to periodic stability and alignment checks. " # ... (rest of protocol text)
+            "<i>All access nodes are subject to periodic stability and alignment checks. "
+            "Non-standard signal patterns or deviations from baseline parameters (ΔPrime) "
+            "may indicate potential desynchronization risks. Active diagnostic measures are "
+            "recommended to ensure continued node viability and prevent automated quarantine protocols.</i>"
+            # Removed the extra "/start" advice from here as it's now part of a flow.
         )
         await query.message.reply_html(protocol_text)
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
@@ -228,7 +236,10 @@ async def s1_ignore_warning_callback(update: Update, context: ContextTypes.DEFAU
         user_secure_id = context.user_data.get("secure_id", "UNKNOWN_NODE")
         warning_text = (
             f"🔴 <b>WARNING IGNORED — SYSTEM OVERRIDE ENGAGED</b>\n\n"
-            f"<i>Node <code>{user_secure_id}</code> instability detected.\n" # ... (rest of warning text)
+            f"<i>Node <code>{user_secure_id}</code> instability detected.\n"
+            f"You are now subject to mandatory diagnostic protocol.</i>\n"
+            f"🚨 <b>Redirecting to Step ②: TRACE_REPORT_Δ7</b>."
+            # Removed the extra "/start" advice from here
         )
         await query.message.reply_html(warning_text)
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
@@ -247,7 +258,7 @@ async def s1_ignore_warning_callback(update: Update, context: ContextTypes.DEFAU
 async def step_2_entry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = update.effective_user
-    if not query or not query.message or not user: # query.message is the message with the "CONTINUE TO STEP 2" button
+    if not query or not query.message or not user:
         logger.warning("step_2_entry_handler: Missing query, message, or user.")
         if query: await query.answer()
         return
@@ -267,29 +278,41 @@ async def step_2_entry_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info(f"User {user_id} entering Step 2 from: {source_entry}")
 
         opening_message_s2 = ""
+        # 完整的 opening_message_s2 文本，根据您的审阅建议
         if source_entry == "from_ignore":
-            opening_message_s2 = "..." # As defined before
+            opening_message_s2 = (
+                "⚠️ <b>SYSTEM OVERRIDE PROTOCOL ACTIVE.</b>\n"
+                "Your decision to ignore critical warnings has been logged. "
+                "Mandatory TRACE_REPORT_Δ7 analysis is now being initiated due to unaddressed node instability."
+            )
             context.user_data["risk_score"] = 1.0
         elif source_entry == "from_protocol":
-            opening_message_s2 = "..." # As defined before
+            opening_message_s2 = (
+                "📘 <b>SYSTEM PROTOCOL ACKNOWLEDGED.</b>\n"
+                "Your review of system guidelines has been noted. "
+                "Proceeding with TRACE_REPORT_Δ7 for detailed node alignment analysis as per standard procedure."
+            )
             context.user_data["risk_score"] = 0.5
         else: # from_diagnostic or unknown
-            opening_message_s2 = "..." # As defined before
+            opening_message_s2 = (
+                "🧠 <b>Your diagnostic response has been logged.</b>\n"
+                "System now launching TRACE_REPORT_Δ7 based on node status vector patterns."
+            )
             context.user_data["risk_score"] = 0.2
         
-        # ❗问题 2：Step 2 内部 await query.message.reply_html(...) 多次调用未做 UI 层逻辑判定 (优化)
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1.2) # Artificial delay for better UX pacing
-        await query.message.reply_html(opening_message_s2) # Send the tailored opening
+        await asyncio.sleep(1.2) 
+        await query.message.reply_html(opening_message_s2)
 
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1.8) # Another delay
+        await asyncio.sleep(1.8) 
 
         await query.message.reply_html(
             "🧩 <b>STEP ②: TRACE_REPORT_Δ7 ANALYSIS</b> 🧩\n\n"
             "Scanning ΔPrime vectors...\n"
             "Correlating signal drift patterns...\n"
             "Please allow a moment for the system to compile the report."
+            # Removed "/start" advice as user is now in Step 2 flow
         )
         context.user_data["current_flow_step"] = STEP_2_STARTED_ANALYSIS
         logger.info(f"User {user_id} has started Step 2 analysis. Status: {STEP_2_STARTED_ANALYSIS}, Risk Score: {context.user_data.get('risk_score')}")
