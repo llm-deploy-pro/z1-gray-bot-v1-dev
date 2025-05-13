@@ -1,218 +1,118 @@
-import asyncio
 import logging
-import datetime
+import os
+import asyncio # 虽然主逻辑在webhook，但handlers可能用
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.constants import ChatAction
-from telegram.ext import ContextTypes
+from telegram import Update # Update 在handlers里用
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes, # ContextTypes 在handlers里用
+    # MessageHandler, # 如果有其他消息处理
+    # filters, # 如果有其他消息处理
+)
 
-# Assuming utils.helpers.generate_user_secure_id exists and works as intended
-from utils.helpers import generate_user_secure_id
+# 导入 handlers 模块中的函数和常量
+# 确保 handlers 是一个可导入的包（即 handlers 文件夹下有 __init__.py）
+from handlers import step_1
+# 如果上面的导入方式有问题，并且 handlers 与 start_bot.py 在同一项目根目录，
+# 确保 Python 的模块搜索路径正确。
+
+# 配置日志
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+# PTB 的日志比较啰嗦，可以调整特定模块的日志级别
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.INFO) # 或者 WARNING
 
 logger = logging.getLogger(__name__)
 
-# --- Callback Data Constants ---
-CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN = "s1_initiate_diagnostic_scan"
-CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW = "s1_view_protocol_overview"
-CALLBACK_S1_IGNORE_WARNING = "s1_ignore_warning" # New constant
+# --- 从环境变量获取配置 ---
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    logger.critical("FATAL: TELEGRAM_BOT_TOKEN environment variable not set!")
+    exit(1) # 明确退出
+
+# Render 会自动设置 RENDER_EXTERNAL_URL
+WEBHOOK_URL_BASE = os.environ.get("RENDER_EXTERNAL_URL")
+if not WEBHOOK_URL_BASE:
+    logger.critical("FATAL: RENDER_EXTERNAL_URL environment variable not set! This is required for webhook on Render.")
+    exit(1) # 明确退出
+
+WEBHOOK_PATH = BOT_TOKEN # 使用 Bot Token 作为路径是一种常见且安全的做法
+FULL_WEBHOOK_URL = f"{WEBHOOK_URL_BASE.rstrip('/')}/{WEBHOOK_PATH.lstrip('/')}"
+
+# Render 会通过 PORT 环境变量指定端口，通常是 10000
+# 本地开发时可以设置一个备用端口，例如 8443 或 5000
+PORT = int(os.environ.get("PORT", 8443))
+
+# 判断运行环境，例如 'production' (在Render上) 或 'development' (本地)
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
 
 
-async def start_step_1_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not update.message or not update.effective_chat:
-        logger.warning("start_step_1_flow called without a message or effective_chat.")
-        return
-    if not user:
-        logger.warning("Effective user is None in start_step_1_flow.")
-        return
+def main() -> None:
+    """配置并启动 Telegram Bot."""
+    logger.info(f"--- Starting Z1-Gray Bot ---")
+    logger.info(f"Application Environment (APP_ENV): {APP_ENV}")
+    logger.info(f"Bot Token: {'*' * (len(BOT_TOKEN) - 4) + BOT_TOKEN[-4:]}") # Masked token
 
-    user_id = user.id
-    logger.info(f"User {user_id} ({user.username or 'N/A'}) started step 1 flow.")
+    # 创建 Application 实例
+    # 可以考虑在这里配置持久化，如果 user_data 需要跨重启保留
+    # from telegram.ext import PicklePersistence
+    # persistence = PicklePersistence(filepath="bot_persistence")
+    # application = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    secure_id = generate_user_secure_id(str(user_id))
+    # --- 注册 Command 和 CallbackQuery Handlers ---
+    # /start 命令的处理
+    application.add_handler(CommandHandler("start", step_1.start_step_1_flow))
 
-    try:
-        # 第1条消息
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.message.reply_html(
-            "🔷 ACCESS NODE CONFIRMED\n"
-            "→ PROTOCOL [Z1-GRAY_ΔPRIME] INITIALIZED"
+    # Step 1 中的按钮回调
+    application.add_handler(CallbackQueryHandler(
+        step_1.s1_initiate_diagnostic_scan_callback,
+        pattern=f"^{step_1.CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN}$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        step_1.s1_view_protocol_overview_callback,
+        pattern=f"^{step_1.CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW}$"
+    ))
+    application.add_handler(CallbackQueryHandler(
+        step_1.s1_ignore_warning_callback,
+        pattern=f"^{step_1.CALLBACK_S1_IGNORE_WARNING}$"
+    ))
+    # --- End of handler registration ---
+
+    # 根据运行环境选择启动方式
+    if APP_ENV == "production":
+        logger.info(f"CRITICAL CHECK: Production mode detected. Starting webhook.")
+        logger.info(f"Webhook will listen on 0.0.0.0:{PORT}")
+        logger.info(f"Webhook path: /{WEBHOOK_PATH}")
+        logger.info(f"Webhook URL to be set with Telegram: {FULL_WEBHOOK_URL}")
+
+        # 在生产环境中，通常建议在启动时设置 webhook，并清理旧的
+        # PTB 的 run_webhook 会自动处理 set_webhook
+        application.run_webhook(
+            listen="0.0.0.0",  # 必须是 0.0.0.0 才能被 Render 外部访问
+            port=PORT,
+            url_path=WEBHOOK_PATH,
+            webhook_url=FULL_WEBHOOK_URL,
+            drop_pending_updates=True # 生产环境通常建议清除旧更新
         )
-        await asyncio.sleep(1.5)
-
-        # 第2条消息 + 时间戳
-        timestamp_str = datetime.datetime.utcnow().strftime('%H:%M:%S.%f')[:-3] + ' UTC'
-        message_text_2 = (
-            f"→ TIMESTAMP: {timestamp_str}\n"
-            f"🔹 SECURE IDENTIFIER GENERATED\n"
-            f"→ USER_SECURE_ID: <code>{secure_id}</code>\n"
-            f"→ AUTH_LAYER: 2B | SYNC_STATUS: PENDING"
+    else: # development or other local environment
+        logger.info(f"CRITICAL CHECK: Development mode detected. Starting polling.")
+        logger.info("Clearing any existing webhook before starting polling...")
+        # asyncio.run(application.bot.delete_webhook(drop_pending_updates=True)) # 确保清除
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES, # 根据需要调整
+            drop_pending_updates=True
         )
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.message.reply_html(message_text_2)
-        await asyncio.sleep(2.7)
 
-        # 第3条消息
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.message.reply_html(
-            "⚠️ INITIAL NODE ANALYSIS: CRITICAL WARNING\n"
-            "→ STABILITY RISK INDEX: 0.84 (ABOVE THRESHOLD)\n"
-            "→ TRACE_SIGNAL: NON-STANDARD ALIGNMENT"
-        )
-        await asyncio.sleep(4.5)
+    logger.info("--- Z1-Gray Bot has shut down or encountered an unhandled error ---")
 
-        # 第4条消息
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.message.reply_html(
-            "🔒 SYSTEM ALERT: Your access node has entered a volatility state.\n"
-            "→ Interruption may trigger node quarantine protocol."
-        )
-        await asyncio.sleep(3.2)
-
-        # 第5条消息
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.message.reply_html(
-            "🧠 ACTION REQUIRED: Begin full TRACE_DIAGNOSTIC to determine node viability.\n"
-            "→ Delayed response = elevated risk of deactivation"
-        )
-        await asyncio.sleep(2.8)
-
-        # 行内按钮（视觉与心理冲击力强化版）
-        keyboard = [
-            [InlineKeyboardButton("🧪 RUN TRACE_DIAGNOSTIC NOW ⚡️", callback_data=CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN)],
-            [InlineKeyboardButton("📄 VIEW SYSTEM PROTOCOL 📘", callback_data=CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW)],
-            [InlineKeyboardButton("⛔️ IGNORE SYSTEM WARNING (NOT RECOMMENDED)", callback_data=CALLBACK_S1_IGNORE_WARNING)]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await update.message.reply_html("SELECT ACTION:", reply_markup=reply_markup)
-
-        context.user_data["current_flow_step"] = "AWAITING_STEP_1_BUTTON"
-        logger.info(f"User {user_id}: current_flow_step set to AWAITING_STEP_1_BUTTON. User data: {context.user_data}")
-
-    except Exception as e:
-        logger.error(f"Error in start_step_1_flow for user {user_id}: {e}", exc_info=True)
-        if update.message:
-            try:
-                await update.message.reply_text(
-                    "⚠️ System communication error during initialization. "
-                    "Please try the /start sequence again shortly."
-                )
-            except Exception as e_reply:
-                logger.error(f"Error sending error reply to user {user_id}: {e_reply}")
-
-
-async def s1_view_protocol_overview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-
-    if not query or not query.message:
-        logger.warning("s1_view_protocol_overview_callback: Callback query or query.message is None.")
-        if query: await query.answer()
-        return
-    
-    user_id = user.id if user else "Unknown"
-    logger.info(f"User {user_id} selected '{CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW}'.")
-
-    try:
-        await query.answer()
-        await query.message.reply_html(
-            "📄 <b>System Protocol Overview</b> (Simplified Extract):\n\n"
-            "<i>All access nodes are subject to periodic stability and alignment checks. "
-            "Non-standard signal patterns or deviations from baseline parameters (ΔPrime) "
-            "may indicate potential desynchronization risks. Active diagnostic measures are "
-            "recommended to ensure continued node viability and prevent automated quarantine protocols.</i>\n\n"
-            "⚠️ Your node has flagged for review. It is advised to <b>INITIATE TRACE_DIAGNOSTIC</b> promptly."
-        )
-    except Exception as e:
-        logger.error(f"Error in s1_view_protocol_overview_callback for user {user_id}: {e}", exc_info=True)
-        try:
-            await query.edit_message_text(
-                text=query.message.text + "\n\n⚠️ Error loading protocol details. Please try again or proceed with diagnostics.",
-                reply_markup=query.message.reply_markup
-            )
-        except Exception:
-            try:
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text="⚠️ An error occurred while trying to display protocol information. Please try again."
-                )
-            except Exception as e_send:
-                logger.error(f"Failed to send follow-up error to user {user_id}: {e_send}")
-
-
-async def s1_initiate_diagnostic_scan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not query.message or not user:
-        logger.warning("s1_initiate_diagnostic_scan_callback: Missing query, message, or user.")
-        if query: await query.answer()
-        return
-    
-    user_id = user.id
-    logger.info(f"User {user_id} selected '{CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN}'.")
-    await query.answer("Diagnostic scan initiating...") # User sees this as a toast/popup
-    try:
-        await query.edit_message_text( # Edit the message that had the buttons
-            text="🔬 TRACE_DIAGNOSTIC INITIATED...\n"
-                 "ANALYZING NODE STABILITY SIGNATURES.\n"
-                 "PLEASE STAND BY."
-        )
-        context.user_data["current_flow_step"] = "STEP_1_DIAGNOSTIC_RUNNING"
-        # ... further logic for diagnostic scan ...
-        await asyncio.sleep(3) # Simulate scan
-        # This reply will be a new message, as the original button message was edited.
-        await query.message.reply_text("DIAGNOSTIC PHASE 1 COMPLETE. Node status report pending further system analysis.")
-
-    except Exception as e:
-        logger.error(f"Error in s1_initiate_diagnostic_scan_callback for user {user_id}: {e}", exc_info=True)
-        if query.message: # If we can still access the original message context
-             # Try to send a new message if editing failed or is not appropriate
-            await query.message.reply_text("⚠️ Error initiating diagnostic. System integrity check recommended. Please try /start again.")
-
-
-# New callback handler for "IGNORE SYSTEM WARNING"
-async def s1_ignore_warning_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-
-    if not query or not query.message:
-        logger.warning("s1_ignore_warning_callback: Callback query or query.message is None.")
-        if query: await query.answer()
-        return
-
-    user_id = user.id if user else "Unknown"
-    logger.info(f"User {user_id} selected '{CALLBACK_S1_IGNORE_WARNING}'. This is NOT recommended.")
-
-    try:
-        await query.answer("Processing decision...", show_alert=False) # Subtle answer
-
-        # Edit the original message to reflect the choice and its consequences
-        # This also removes the buttons, which is good in this "dangerous choice" path
-        await query.edit_message_text(
-            text=f"{query.message.text}\n\n" # Keep original "SELECT ACTION:"
-                 "🔴 <b>WARNING ACKNOWLEDGED & IGNORED</b> 🔴\n\n"
-                 "<i>Node {UserSecureID} is now flagged for potential instability.\n"
-                 "Failure to address critical warnings may lead to automated\n"
-                 "<b>NODE LOCKDOWN PROTOCOL</b> activation without further notice.</i>\n\n"
-                 "Reconsideration is strongly advised. You may /start the process again to initiate diagnostics."
-                 .replace("{UserSecureID}", context.user_data.get("secure_id", "UNKNOWN")) # Try to get secure_id if stored
-        )
-        # Potentially set a user_data flag indicating this dangerous choice
-        context.user_data["ignored_critical_warning_step1"] = True
-        logger.warning(f"User {user_id} has chosen to ignore the critical warning. Flag set.")
-
-    except Exception as e:
-        logger.error(f"Error in s1_ignore_warning_callback for user {user_id}: {e}", exc_info=True)
-        # If editing fails, send a new message
-        if query.message: # Check if query.message is still valid
-            try:
-                await query.message.reply_html(
-                    "<b>ACTION RECORDED.</b>\n"
-                    "<i>You have chosen to ignore the system warning. "
-                    "This may have severe consequences for your node access. "
-                    "Consider running diagnostics via /start.</i>"
-                )
-            except Exception as e_reply:
-                 logger.error(f"Failed to send follow-up message after ignore error for user {user_id}: {e_reply}")
+if __name__ == "__main__":
+    # 确保在 Windows 上 asyncio 事件循环策略正确 (如果本地开发在 Windows)
+    # if os.name == 'nt':
+    #    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    main()
