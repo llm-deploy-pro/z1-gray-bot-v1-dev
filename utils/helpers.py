@@ -1,222 +1,254 @@
-# handlers/z1_flow_handler.py
+# utils/helpers.py
 
 import asyncio
 import logging
+import datetime
 import hashlib
-import random
-from typing import List # Ensure List is imported for type hinting
+import os
+import random # For generating various random IDs if needed beyond user_secure_id
+from dataclasses import dataclass, field
+from typing import List, Union, Callable, Any, Coroutine, Tuple, Dict # Added more types
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, CallbackQuery, Message # Added Message type
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
-from telegram.error import TelegramError
-
-# utils.helpers should be in a directory accessible via PYTHONPATH
-# e.g., if your project root is 'z1_gray_bot', and handlers is 'z1_gray_bot/handlers',
-# then utils should be 'z1_gray_bot/utils'
-from utils.helpers import TimedMessage, send_delayed_sequence, generate_user_secure_id, send_system_error_reply
+from telegram.error import TelegramError, RetryAfter, TimedOut, NetworkError # More specific errors
 
 logger = logging.getLogger(__name__)
 
-# --- STATE DEFINITIONS ---
-FLOW_ACTIVE_UNIFIED = "z1_flow_unified_active"
-FLOW_PAYMENT_BUTTON_SHOWN = "z1_flow_payment_button_shown"
-FLOW_PROCESSING_PAYMENT = "z1_flow_processing_payment"
-FLOW_PAYMENT_COMPLETE = "z1_flow_payment_complete"
+# --- Environment Variables & Constants ---
+_Z1_GRAY_SALT = os.environ.get("Z1_GRAY_SALT", "DEFAULT_FALLBACK_SALT_CHANGE_ME_XYZ123")
+if _Z1_GRAY_SALT == "DEFAULT_FALLBACK_SALT_CHANGE_ME_XYZ123":
+    logger.warning("SECURITY WARNING: Using default Z1_GRAY_SALT. Please set a unique Z1_GRAY_SALT environment variable.")
 
-# --- CALLBACK DATA (used in start_bot.py for registration) ---
-CALLBACK_UNLOCK_REPAIR_49_UNIFIED = "z1_unlock_repair_49_unified"
-
-# --- HELPER FOR SCRIPT IDs ---
-def _generate_script_id(prefix: str) -> str:
-    """Generates IDs like SLT-7B2D9E1F or AKY-3C5E8D9A"""
-    random_hex = hashlib.sha256(str(random.random()).encode()).hexdigest().upper()
-    return f"{prefix}-{random_hex[:8]}"
-
-async def start_z1_gray_unified_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# --- ID Generation ---
+def generate_user_secure_id(user_id: int) -> str:
     """
-    Handles the entire Z1-Gray 3-step script in a unified manner.
-    Triggered by /start.
+    Generates a 16-character hex string user ID based on Telegram user_id and salt.
+    Used for USER_SECURE_ID in the script, format USR-XXXXXXXX.
+    The "USR-" prefix is typically added by the caller.
     """
-    if not update.message or not update.effective_chat:
-        logger.warning("start_z1_gray_unified_flow: Missing message or effective_chat.")
-        return
+    combined_string = f"USR_{user_id}_{_Z1_GRAY_SALT}" # Added prefix for internal consistency
+    hash_object = hashlib.sha256(combined_string.encode('utf-8'))
+    return hash_object.hexdigest()[:16].upper() # Ensure uppercase hex
 
-    user = update.effective_user
-    if not user:
-        logger.warning("start_z1_gray_unified_flow: Effective user is None.")
-        await send_system_error_reply(update, context, "UserNotFoundOnUnifiedStart", "User identification failed.")
-        return
+def generate_script_id(prefix: str, length: int = 8) -> str:
+    """
+    Generates pseudo-random IDs for script elements like SLOT_ID, ACCESS_KEY.
+    e.g., SLT-XXXXXXXX, AKY-XXXXXXXX
+    """
+    if not prefix or not isinstance(prefix, str) or len(prefix) > 5: # Basic validation
+        prefix = "ID"
+    if not isinstance(length, int) or not (4 <= length <= 16):
+        length = 8
 
-    user_id = user.id
-    chat_id = update.effective_chat.id
-    context.user_data["user_id"] = user_id # Store for global access within user_data
+    # Using a more robust way to get random bytes for better randomness
+    random_bytes = os.urandom(16) # Generate 16 random bytes
+    hash_object = hashlib.sha256(random_bytes)
+    return f"{prefix.upper()}-{hash_object.hexdigest()[:length].upper()}"
 
-    current_flow_state = context.user_data.get("current_z1_unified_flow_state")
-    active_states_for_reset = [
-        FLOW_ACTIVE_UNIFIED, FLOW_PAYMENT_BUTTON_SHOWN, FLOW_PROCESSING_PAYMENT
-    ]
-    if update.message.text == "/start" and current_flow_state in active_states_for_reset:
-        logger.info(f"[Z1 Unified Flow] User {user_id} sent /start mid-flow ({current_flow_state}). Resetting.")
-        await update.message.reply_html("🔄 System reset. Re-initiating Z1-Gray protocol...")
-        for key in ["current_z1_unified_flow_state", "user_secure_id_formatted", "slot_id", "access_key", "z1_payment_message_id"]: # Changed secure_id key
-            context.user_data.pop(key, None)
+# --- Message Sequencing & Sending ---
+@dataclass
+class TimedMessage:
+    text: str
+    delay_before: float = 0.8  # Delay in seconds before this message is sent
+    typing: bool = True       # Show typing action before sending this message
+    parse_mode: Union[str, None] = ParseMode.HTML # Default to HTML
+    reply_markup: Union[Any, None] = None # For inline keyboards
+    # Optional: If you want to include a system log prefix directly in the data
+    # system_log_prefix: Union[str, None] = None # e.g., "[LOG: Z1_SYS_...]"
 
-    logger.info(f"[Z1 Unified Flow] User {user_id} (Chat: {chat_id}) starting unified Z1-Gray script.")
-    context.user_data["current_z1_unified_flow_state"] = FLOW_ACTIVE_UNIFIED
-
-    # --- 【STEP A】SYSTEM IDENTIFICATION & THREAT ALERT ---
-    raw_secure_id = generate_user_secure_id(user_id) # This is the 16-char hex
-    user_secure_id_formatted = f"USR-{raw_secure_id[:8]}" # Format as USR-9F3A7C2B (example based on description)
-    context.user_data["user_secure_id_formatted"] = user_secure_id_formatted
-
-    messages_step_a = [
-        TimedMessage(text="<code>[LOG: Z1_SYS_ALERT_001]</code>\n⚠️📡 <b>[SYSTEM ALERT]</b> Node anomaly detected.", delay_before=0.5),
-        TimedMessage(text="<code>[LOG: Z1_SYS_SCAN_002]</code>\n🧬📉 <code>[SCAN COMPLETE]</code> Threat level: <b>HIGH</b>.", delay_before=3.0),
-        TimedMessage(text=f"<code>[LOG: Z1_SYS_ID_003]</code>\n🧠🆔 [NODE ID] <b>{user_secure_id_formatted}</b>", delay_before=3.0)
-    ]
-
+async def send_delayed_message(
+    bot,
+    chat_id: int,
+    text: str,
+    delay_before: float = 0.8,
+    show_typing: bool = True,
+    parse_mode: Union[str, None] = ParseMode.HTML,
+    reply_markup: Union[Any, None] = None
+) -> Union[Message, None]:
+    """Helper to send a single message with optional delay and typing."""
     try:
-        # Send Step A messages
-        msg_object_a = None # To store the first replied message object if needed later
-        for i, timed_msg in enumerate(messages_step_a):
-            if timed_msg.typing and timed_msg.delay_before > 0.2:
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-            if timed_msg.delay_before > 0:
-                await asyncio.sleep(timed_msg.delay_before)
-            if i == 0 and update.message: # Reply to the /start command for the first message
-                msg_object_a = await update.message.reply_html(text=timed_msg.text)
-            else: # Send subsequent messages normally
-                await context.bot.send_message(chat_id=chat_id, text=timed_msg.text, parse_mode=ParseMode.HTML)
-        logger.info(f"[Z1 Unified Flow] User {user_id}: Step A messages sent successfully.")
-        await asyncio.sleep(1.5) # Brief pause before starting Step B
-
-        # --- 【STEP B】DIAGNOSTIC REPORT & ACTION MANDATE ---
-        slot_id = _generate_script_id("SLT") # e.g., SLT-7B2D9E1F
-        context.user_data["slot_id"] = slot_id
-
-        messages_step_b = [
-            TimedMessage(text="<code>[LOG: Z1_SYS_DIAG_004]</code>\n📊🧠 [DIAGNOSTIC REPORT] <i>Critical failure</i> in node integrity.", delay_before=0.5),
-            TimedMessage(text="<code>[LOG: Z1_SYS_ACTION_005]</code>\n⚠️🔧 <b>[ACTION REQUIRED]</b> Immediate system intervention mandated.", delay_before=4.0),
-            TimedMessage(text=f"<code>[LOG: Z1_SYS_SLOT_006]</code>\n🔒🆔 [SLOT ID] <code>{slot_id}</code>", delay_before=4.0)
-        ]
-        await send_delayed_sequence(bot=context.bot, chat_id=chat_id, sequence=messages_step_b, initial_delay=0.2)
-        logger.info(f"[Z1 Unified Flow] User {user_id}: Step B messages sent successfully.")
-        await asyncio.sleep(1.5) # Brief pause before starting Step C
-
-        # --- 【STEP C】LOCK SEQUENCE + ACCESS INITIATION ---
-        access_key = _generate_script_id("AKY") # e.g., AKY-3C5E8D9A
-        context.user_data["access_key"] = access_key
-
-        messages_step_c_pre_button = [
-            TimedMessage(text=f"<code>[LOG: Z1_SYS_KEY_007]</code>\n🔑⏳ [ACCESS KEY] <b>{access_key}</b>", delay_before=0.5)
-        ]
-        text_c2_timer = ("<code>[LOG: Z1_SYS_TIMER_008]</code>\n"
-                         "⏰⚠️ [TIME REMAINING] <code>08:43 LEFT</code>")
-
-        keyboard = [[
-            InlineKeyboardButton("🔓 UNLOCK & REPAIR ($49)", callback_data=CALLBACK_UNLOCK_REPAIR_49_UNIFIED)
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        if messages_step_c_pre_button: # Send key message first
-            await send_delayed_sequence(bot=context.bot, chat_id=chat_id, sequence=messages_step_c_pre_button, initial_delay=0.2)
-
-        # Send the timer message with the payment button
-        if await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING):
-            await asyncio.sleep(1.0) # Artificial delay for typing animation
+        if show_typing and delay_before > 0.2: # Only show typing if delay is noticeable
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         
-        payment_message = await context.bot.send_message(
+        if delay_before > 0:
+            await asyncio.sleep(delay_before)
+
+        message = await bot.send_message(
             chat_id=chat_id,
-            text=text_c2_timer,
+            text=text,
+            parse_mode=parse_mode,
             reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
+            disable_web_page_preview=True # Often good for system messages
         )
-        context.user_data["z1_payment_message_id"] = payment_message.message_id # Store if needed for specific editing
-        context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_BUTTON_SHOWN
-        logger.info(f"[Z1 Unified Flow] User {user_id}: Step C messages and payment button sent. State: {FLOW_PAYMENT_BUTTON_SHOWN}")
-
+        return message
     except TelegramError as e:
-        logger.error(f"[Z1 Unified Flow] TelegramError for user {user_id} during unified flow: {e}", exc_info=True)
-        await send_system_error_reply(update, context, user_id, f"System communication error (Code: TU_COMM_{e.__class__.__name__}). Please try /start again.")
-    except Exception as e:
-        logger.error(f"[Z1 Unified Flow] General error for user {user_id} during unified flow: {e}", exc_info=True)
-        await send_system_error_reply(update, context, user_id, "An unexpected system error occurred (Code: TU_GEN). Please try /start again.")
+        logger.warning(f"Failed to send single delayed message to chat {chat_id}: '{text[:50]}...' due to {e}")
+    except Exception as e_general:
+        logger.error(f"Unexpected error sending single delayed message to chat {chat_id}: '{text[:50]}...' due to {e_general}", exc_info=True)
+    return None
 
 
-async def handle_unlock_repair_callback_unified(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Handles the click on "🔓 UNLOCK & REPAIR ($49)" button in the unified flow.
-    """
-    query = update.callback_query
-    user = update.effective_user
+async def send_delayed_sequence(
+    bot, # Typically context.bot
+    chat_id: int,
+    sequence: List[TimedMessage],
+    initial_delay: float = 0
+) -> List[Union[Message, None]]:
+    """Sends a sequence of TimedMessage objects."""
+    sent_messages: List[Union[Message, None]] = []
+    if initial_delay > 0:
+        await asyncio.sleep(initial_delay)
 
-    if not query or not user or not query.message:
-        logger.warning("[Z1 Unified CB] Invalid callback query or missing user/message.")
-        if query: await query.answer("Error processing request.", show_alert=True)
-        return
+    for item in sequence:
+        message_content = item.text
+        # if item.system_log_prefix: # If you decide to use this field
+        #     message_content = f"<code>{item.system_log_prefix}</code>\n{item.text}"
+            
+        sent_msg = await send_delayed_message(
+            bot=bot,
+            chat_id=chat_id,
+            text=message_content,
+            delay_before=item.delay_before,
+            show_typing=item.typing,
+            parse_mode=item.parse_mode,
+            reply_markup=item.reply_markup
+        )
+        sent_messages.append(sent_msg)
+    return sent_messages
 
-    user_id = user.id
-    chat_id = query.message.chat_id
-    message_id_to_edit = query.message.message_id
+# --- Error Handling ---
+async def send_system_error_reply(
+    target_object: Union[Update, CallbackQuery, Message, None], # Added Message
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id_param: Union[int, str] = "Unknown",
+    error_code: str = "GEN_ERR", # Added an error code for better tracking
+    custom_error_text: Union[str, None] = None
+) -> None:
+    """Sends a standardized system error reply."""
 
-    logger.info(f"[Z1 Unified CB] User {user_id} clicked '{CALLBACK_UNLOCK_REPAIR_49_UNIFIED}'.")
+    default_error_text = "An unexpected system error occurred. Please try the /start sequence again or contact support if the issue persists."
+    error_text_to_send = custom_error_text if custom_error_text else default_error_text
 
-    # Prevent re-processing or clicking in wrong state
-    if context.user_data.get("current_z1_unified_flow_state") != FLOW_PAYMENT_BUTTON_SHOWN:
-        logger.warning(f"[Z1 Unified CB] User {user_id} clicked button in unexpected state: {context.user_data.get('current_z1_unified_flow_state')}")
-        await query.answer("Request already processed or system is busy. Please wait.", show_alert=True)
-        return
+    log_user_id_str = str(user_id_param)
+    chat_to_send_to = None
+    effective_user_telegram_id = None
+
+    # Extract info from target_object
+    if isinstance(target_object, Update):
+        if target_object.effective_user:
+            effective_user_telegram_id = target_object.effective_user.id
+            log_user_id_str = str(effective_user_telegram_id)
+        current_message = target_object.effective_message # Handles both message and callback_query.message
+        if current_message:
+            chat_to_send_to = current_message.chat_id
+    elif isinstance(target_object, CallbackQuery):
+        if target_object.from_user:
+            effective_user_telegram_id = target_object.from_user.id
+            log_user_id_str = str(effective_user_telegram_id)
+        if target_object.message:
+            chat_to_send_to = target_object.message.chat_id
+    elif isinstance(target_object, Message): # If a direct message object is passed
+        if target_object.from_user:
+            effective_user_telegram_id = target_object.from_user.id
+            log_user_id_str = str(effective_user_telegram_id)
+        chat_to_send_to = target_object.chat_id
     
-    context.user_data["current_z1_unified_flow_state"] = FLOW_PROCESSING_PAYMENT # Update state
+    # Fallback for user_id from context.user_data
+    if not effective_user_telegram_id and user_id_param == "Unknown" and context.user_data and "user_id" in context.user_data:
+        stored_user_id = context.user_data.get("user_id")
+        if isinstance(stored_user_id, int):
+            effective_user_telegram_id = stored_user_id
+            log_user_id_str = str(effective_user_telegram_id)
+
+    logger.error(
+        f"ERROR_CODE: {error_code} - Sending system error reply to user_id='{log_user_id_str}', "
+        f"chat_id='{chat_to_send_to}': {error_text_to_send}"
+    )
+
+    final_error_message = (
+        f"⚠️ <b>SYSTEM ERROR (Code: {error_code} / Ref: {log_user_id_str[:8] if log_user_id_str != 'Unknown' else 'N/A'})</b>:\n"
+        f"{error_text_to_send}"
+    )
 
     try:
-        await query.answer("Processing...") # Instant feedback to user
-
-        # Edit the button message: make it appear as if processing
-        original_text_html = query.message.text_html # Get current text of the message with button
-        new_text_html = f"{original_text_html}\n\n⏳ <b>Processing...</b>" # Append processing status
+        # Try to reply to the original message if possible and makes sense
+        reply_candidate = None
+        if isinstance(target_object, Update) and target_object.message:
+            reply_candidate = target_object.message
+        elif isinstance(target_object, (CallbackQuery, Message)) and target_object.message: # type: ignore
+            reply_candidate = target_object.message # type: ignore
         
-        await context.bot.edit_message_text(
-            text=new_text_html,
-            chat_id=chat_id,
-            message_id=message_id_to_edit,
-            reply_markup=None, # Remove the keyboard (button)
-            parse_mode=ParseMode.HTML
-        )
-        logger.info(f"[Z1 Unified CB] User {user_id}: Payment button message updated to 'Processing...'.")
-
-        await asyncio.sleep(3.0) # Simulate payment verification delay
-
-        # Retrieve stored IDs for the final message
-        user_secure_id_final = context.user_data.get("user_secure_id_formatted", "N/A")
-        access_key_final = context.user_data.get("access_key", "N/A")
-        
-        final_confirmation_text = (
-            "<code>[LOG: Z1_SYS_PAYMENT_009_SUCCESS]</code>\n"
-            "✅ <b>AUTHORIZATION COMPLETE. PAYMENT RECEIVED.</b>\n\n"
-            "Your Z1-GRAY PROTOCOL Access Permission Matrix is now being compiled based on your unique Node ID and Access Key.\n"
-            f"Node ID: <code>{user_secure_id_final}</code>\n"
-            f"Access Key: <code>{access_key_final}</code>\n\n"
-            "➡️ You will receive your personalized Access Matrix documents (the 5 images/files) via a secure direct message or link within the next few minutes.\n\n"
-            "<i>Thank you for reactivating your node with Z1-GRAY PROTOCOL.</i>"
-        )
-        await context.bot.send_message(chat_id=chat_id, text=final_confirmation_text, parse_mode=ParseMode.HTML)
-        
-        context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_COMPLETE
-        logger.info(f"[Z1 Unified CB] User {user_id}: Simulated payment successful. Final message sent. State: {FLOW_PAYMENT_COMPLETE}")
-
-    except TelegramError as te:
-        # Handle "message is not modified" error, which can happen on rapid clicks if already edited
-        if "message is not modified" in str(te).lower():
-            logger.warning(f"[Z1 Unified CB] User {user_id}: Message not modified (likely already processed or quick repeat click). Error: {te}")
-            # User has already seen the "Processing..." update or button removed.
+        if reply_candidate and hasattr(reply_candidate, 'reply_html'):
+            await reply_candidate.reply_html(final_error_message)
+        elif chat_to_send_to and context.bot:
+            await context.bot.send_message(chat_id=chat_to_send_to, text=final_error_message, parse_mode=ParseMode.HTML)
+        elif effective_user_telegram_id and context.bot: # Fallback to PM if only user_id is known
+            await context.bot.send_message(chat_id=effective_user_telegram_id, text=final_error_message, parse_mode=ParseMode.HTML)
         else:
-            logger.error(f"[Z1 Unified CB] TelegramError for user {user_id}: {te}", exc_info=True)
-            # Try to send a new message if editing failed for other reasons
-            await context.bot.send_message(chat_id=chat_id, text="A communication error occurred while processing your request. Please contact support if issues persist.")
-            context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_BUTTON_SHOWN # Revert state
-    except Exception as e:
-        logger.error(f"[Z1 Unified CB] General error for user {user_id}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="An unexpected error occurred. Please try again or contact support.")
-        context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_BUTTON_SHOWN # Revert state
+            logger.error(f"Could not send system error reply for {error_code}: No valid target to send message.")
+            
+    except RetryAfter as e_retry:
+        logger.warning(f"Rate limited trying to send error reply for {error_code} to user '{log_user_id_str}'. Retry after {e_retry.retry_after}s.")
+    except (TimedOut, NetworkError) as e_network:
+        logger.error(f"Network error/timeout sending error reply for {error_code} to user '{log_user_id_str}': {e_network}")
+    except TelegramError as e_telegram: # Catch other Telegram specific errors
+        logger.error(f"Telegram API error sending error reply for {error_code} to user '{log_user_id_str}': {e_telegram}", exc_info=True)
+    except Exception as e_reply_critical:
+        logger.critical(f"CRITICAL: Unhandled exception in send_system_error_reply for {error_code} to user '{log_user_id_str}': {e_reply_critical}", exc_info=True)
+
+
+# --- Other Potential Helpers (Add as needed) ---
+
+def get_display_name(user: Update.effective_user) -> str: # type: ignore
+    """Generates a display name for a user, preferring full name."""
+    if not user:
+        return "Unknown User"
+    if user.full_name:
+        return user.full_name
+    if user.username:
+        return f"@{user.username}"
+    return f"User {user.id}"
+
+
+async def edit_message_safely(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    message_id: int,
+    new_text: str,
+    new_reply_markup: Union[Any, None] = None,
+    parse_mode: Union[str, None] = ParseMode.HTML
+) -> bool:
+    """Safely attempts to edit a message, handling common errors."""
+    try:
+        await context.bot.edit_message_text(
+            text=new_text,
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=new_reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True
+        )
+        return True
+    except TelegramError as e:
+        if "message is not modified" in str(e).lower():
+            logger.info(f"Message {message_id} in chat {chat_id} was not modified (already has new content).")
+            return True # Effectively, the state is as desired
+        logger.warning(f"Failed to edit message {message_id} in chat {chat_id}: {e}")
+        return False
+    except Exception as e_general:
+        logger.error(f"Unexpected error editing message {message_id} in chat {chat_id}: {e_general}", exc_info=True)
+        return False
+
+# Example of a helper for delayed execution of a function (might be useful for countdowns)
+# async def run_after_delay(delay_seconds: float, coro: Coroutine[Any, Any, Any]) -> None:
+#     """Runs a coroutine after a specified delay."""
+#     await asyncio.sleep(delay_seconds)
+#     await coro
+
+# Placeholder for image/file sending helper if you were to send the "Access Permission Matrix"
+# async def send_document_or_photo(bot, chat_id, file_path_or_id, caption=None, ...):
+#    pass
+
+logger.info("utils.helpers module loaded.")
