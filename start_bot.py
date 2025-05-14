@@ -4,14 +4,14 @@ import logging
 import os
 import asyncio
 
-from telegram import Update # Not strictly needed here, but often useful
+from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
-# Import the unified flow handler and its specific callback data
-# This line assumes handlers/z1_flow_handler.py exists and contains these names
-from handlers.z1_flow_handler import start_z1_gray_unified_flow, handle_unlock_repair_callback_unified, CALLBACK_UNLOCK_REPAIR_49_UNIFIED
+# --- CRITICAL IMPORT CORRECTION: From handlers.step_1 ---
+from handlers.step_1 import start_main_unified_flow, handle_unified_payment_callback, CALLBACK_PROCESS_Z1_PAYMENT_FROM_STEP1
 
 # --- Environment Variable Logging ---
+# ... (这部分与您之前提供的一致，保持不变) ...
 print(f"CRITICAL_ENV_PRINT_AT_TOP: RENDER_EXTERNAL_URL='{os.environ.get('RENDER_EXTERNAL_URL')}'")
 print(f"CRITICAL_ENV_PRINT_AT_TOP: APP_ENV='{os.environ.get('APP_ENV')}'")
 print(f"CRITICAL_ENV_PRINT_AT_TOP: PORT='{os.environ.get('PORT')}'")
@@ -19,6 +19,7 @@ print(f"CRITICAL_ENV_PRINT_AT_TOP: TELEGRAM_BOT_TOKEN_EXISTS='{'SET' if os.envir
 print(f"CRITICAL_ENV_PRINT_AT_TOP: Z1_GRAY_SALT_EXISTS='{'SET' if os.environ.get('Z1_GRAY_SALT') else 'NOT_SET'}'")
 
 # --- Logging Configuration ---
+# ... (这部分与您之前提供的一致，保持不变) ...
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -28,22 +29,24 @@ logging.getLogger("telegram.ext").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- BOT Configuration ---
+# ... (这部分与您之前提供的一致，保持不变) ...
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     logger.critical("FATAL: TELEGRAM_BOT_TOKEN environment variable not set!")
     exit(1)
 
-BOT_VERSION = os.environ.get("BOT_VERSION", "2.0.1-final-unified") # Increment version
+BOT_VERSION = os.environ.get("BOT_VERSION", "2.1.1-import-fix") # Increment version
 APP_ENV = os.environ.get("APP_ENV", "development").lower()
 WEBHOOK_URL_BASE_FROM_ENV = os.environ.get("RENDER_EXTERNAL_URL")
 
 # --- Webhook/Polling URL Configuration ---
+# ... (这部分与您之前提供的一致，保持不变) ...
 if APP_ENV == "production":
     if not WEBHOOK_URL_BASE_FROM_ENV:
-        logger.critical("FATAL: RENDER_EXTERNAL_URL is MISSING for production on Render! Please set this in your Render service environment.")
+        logger.critical("FATAL: RENDER_EXTERNAL_URL is MISSING for production on Render!")
         exit(1)
     if not WEBHOOK_URL_BASE_FROM_ENV.startswith("https://"):
-        logger.critical(f"FATAL: RENDER_EXTERNAL_URL ('{WEBHOOK_URL_BASE_FROM_ENV}') must be an HTTPS URL for production webhook!")
+        logger.critical(f"FATAL: RENDER_EXTERNAL_URL ('{WEBHOOK_URL_BASE_FROM_ENV}') must be an HTTPS URL!")
         exit(1)
     WEBHOOK_URL_BASE = WEBHOOK_URL_BASE_FROM_ENV
 else:
@@ -62,21 +65,24 @@ ALLOWED_UPDATES_TYPES_STR_LIST = ["message", "callback_query"]
 
 def main() -> None:
     logger.info(f"--- Starting Z1-Gray Bot (Version: {BOT_VERSION}) ---")
+    # ... (其他日志保持不变) ...
     logger.info(f"Application Environment (APP_ENV): {APP_ENV}")
     logger.info(f"Effective Port for Listener: {PORT}")
     logger.info(f"Bot Token Suffix: ...{BOT_TOKEN[-4:]}")
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # --- Register Handlers for the Unified Flow ---
-    application.add_handler(CommandHandler("start", start_z1_gray_unified_flow))
+    # --- Register Handlers for the Unified Flow from step_1.py ---
+    # ✅ 使用从 handlers.step_1 导入的正确名称
+    application.add_handler(CommandHandler("start", start_main_unified_flow))
     application.add_handler(CallbackQueryHandler(
-        handle_unlock_repair_callback_unified,
-        pattern=f"^{CALLBACK_UNLOCK_REPAIR_49_UNIFIED}$"
+        handle_unified_payment_callback,
+        pattern=f"^{CALLBACK_PROCESS_Z1_PAYMENT_FROM_STEP1}$"
     ))
-    logger.info("Registered unified flow command and callback query handlers.")
+    logger.info("Registered unified flow command and callback query handlers (from step_1.py).")
 
     # --- Webhook/Polling Start Logic ---
+    # ... (这部分与您之前提供的一致，保持不变) ...
     try:
         if APP_ENV == "production":
             logger.info(f"Production mode: Initializing webhook application.")
@@ -119,6 +125,4 @@ def main() -> None:
         logger.info(f"--- Z1-Gray Bot (Version: {BOT_VERSION}) application run loop has concluded. ---")
 
 if __name__ == "__main__":
-    # from dotenv import load_dotenv
-    # load_dotenv()
     main()
