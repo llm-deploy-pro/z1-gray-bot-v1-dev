@@ -1,301 +1,212 @@
+# handlers/z1_flow_handler.py
+
 import asyncio
 import logging
-import datetime
+import hashlib
+import random
 from typing import List
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 from telegram.error import TelegramError
 
+# Assuming helpers.py contains these:
 from utils.helpers import TimedMessage, send_delayed_sequence, generate_user_secure_id, send_system_error_reply
-from handlers.step_2 import execute_step_2_scan_sequence
 
 logger = logging.getLogger(__name__)
 
-CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN = "s1_initiate_diagnostic_scan"
-CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW = "s1_view_protocol_overview"
-CALLBACK_S1_IGNORE_WARNING = "s1_ignore_warning"
-CALLBACK_S2_FROM_DIAGNOSTIC = "step2_entry_from_diagnostic"
-CALLBACK_S2_FROM_PROTOCOL = "step2_entry_from_protocol"
-CALLBACK_S2_FROM_IGNORE = "step2_entry_from_ignore"
+# --- STATE DEFINITIONS ---
+FLOW_ACTIVE_UNIFIED = "z1_flow_unified_active" # General state for the unified flow
+FLOW_PAYMENT_BUTTON_SHOWN = "z1_flow_payment_button_shown"
+FLOW_PROCESSING_PAYMENT = "z1_flow_processing_payment"
+FLOW_PAYMENT_COMPLETE = "z1_flow_payment_complete"
 
-AWAITING_STEP_1_BUTTON = "AWAITING_STEP_1_BUTTON"
-AWAITING_STEP_2_FROM_DIAGNOSTIC = "AWAITING_STEP_2_FROM_DIAGNOSTIC"
-AWAITING_STEP_2_FROM_PROTOCOL = "AWAITING_STEP_2_FROM_PROTOCOL"
-AWAITING_STEP_2_FROM_IGNORE = "AWAITING_STEP_2_FROM_IGNORE"
-STEP_2_STARTED_ANALYSIS = "step_2_started_analysis"
+# --- CALLBACK DATA ---
+CALLBACK_UNLOCK_REPAIR_49_UNIFIED = "z1_unlock_repair_49_unified"
+
+# --- HELPER FOR IDs (can be moved to utils.helpers if used elsewhere) ---
+def _generate_script_id(prefix: str) -> str:
+    random_hex = hashlib.sha256(str(random.random()).encode()).hexdigest().upper()
+    return f"{prefix}-{random_hex[:8]}"
 
 
-async def start_step_1_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start_z1_gray_unified_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles the entire Z1-Gray 3-step script in a unified manner.
+    Triggered by /start.
+    """
     if not update.message or not update.effective_chat:
-        logger.warning("start_step_1_flow called without a message or effective_chat.")
+        logger.warning("start_z1_gray_unified_flow: Missing message or effective_chat.")
         return
 
     user = update.effective_user
     if not user:
-        logger.warning("Effective user is None in start_step_1_flow.")
-        await send_system_error_reply(update, context, "UnknownUserOnInit", "User identification failed.")
+        logger.warning("start_z1_gray_unified_flow: Effective user is None.")
+        await send_system_error_reply(update, context, "UserNotFoundOnUnifiedStart", "User identification failed.")
         return
 
     user_id = user.id
+    chat_id = update.effective_chat.id
     context.user_data["user_id"] = user_id
-    current_step = context.user_data.get("current_flow_step", "")
 
-    active_flow_states = [
-        AWAITING_STEP_1_BUTTON, AWAITING_STEP_2_FROM_DIAGNOSTIC,
-        AWAITING_STEP_2_FROM_PROTOCOL, AWAITING_STEP_2_FROM_IGNORE,
-        STEP_2_STARTED_ANALYSIS, "step_2_scan_complete_awaiting_s3"
+    current_flow_state = context.user_data.get("current_z1_unified_flow_state")
+    active_states_for_reset = [
+        FLOW_ACTIVE_UNIFIED, FLOW_PAYMENT_BUTTON_SHOWN, FLOW_PROCESSING_PAYMENT
     ]
-    if update.message.text == "/start" and current_step in active_flow_states:
-        logger.warning(
-            f"[Step ①] User {user_id} (State: {current_step}) initiated /start mid-flow. "
-            "Clearing relevant state and restarting Step 1."
-        )
-        await update.message.reply_html(
-            "⚠️ <b>System State Inconsistency Detected.</b>\n"
-            "Your previous session was interrupted. "
-            "For system integrity, we will restart the initialization sequence."
-        )
-        keys_to_pop = ["current_flow_step", "entry_point_s2", "risk_score", "secure_id", "ignored_critical_warning_step1"]
-        for key in keys_to_pop:
+    if update.message.text == "/start" and current_flow_state in active_states_for_reset:
+        logger.info(f"[Z1 Unified Flow] User {user_id} sent /start mid-flow ({current_flow_state}). Resetting.")
+        await update.message.reply_html("🔄 System reset. Re-initiating Z1-Gray protocol...")
+        for key in ["current_z1_unified_flow_state", "user_secure_id", "slot_id", "access_key", "z1_payment_message_id"]:
             context.user_data.pop(key, None)
-        logger.info(f"[Step ①] User {user_id} stale flow state cleared by /start. Proceeding with fresh Step 1.")
+        # Fall through to start fresh
 
-    logger.info(f"[Step ①] User {user_id} ({user.username or 'N/A'}) started step_1_flow. Current step before this execution: {current_step}")
-    secure_id = generate_user_secure_id(user_id)
-    context.user_data["secure_id"] = secure_id
+    logger.info(f"[Z1 Unified Flow] User {user_id} (Chat: {chat_id}) starting unified Z1-Gray script.")
+    context.user_data["current_z1_unified_flow_state"] = FLOW_ACTIVE_UNIFIED
+
+    # --- 【STEP A】SYSTEM IDENTIFICATION & THREAT ALERT ---
+    user_secure_id = generate_user_secure_id(user_id)
+    context.user_data["user_secure_id"] = user_secure_id
+
+    messages_step_a = [
+        TimedMessage(text="<code>[LOG: Z1_SYS_ALERT_001]</code>\n⚠️📡 <b>[SYSTEM ALERT]</b> Node anomaly detected.", delay_before=0.5),
+        TimedMessage(text="<code>[LOG: Z1_SYS_SCAN_002]</code>\n🧬📉 <code>[SCAN COMPLETE]</code> Threat level: <b>HIGH</b>.", delay_before=3.0),
+        TimedMessage(text=f"<code>[LOG: Z1_SYS_ID_003]</code>\n🧠🆔 [NODE ID] <b>{user_secure_id}</b>", delay_before=3.0)
+    ]
 
     try:
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.5)
-        await update.message.reply_html("🔷 ACCESS NODE CONFIRMED\n→ PROTOCOL [Z1-GRAY_ΔPRIME] INITIALIZED")
+        msg_object_a = None
+        for i, timed_msg in enumerate(messages_step_a):
+            if timed_msg.typing and timed_msg.delay_before > 0.2:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            if timed_msg.delay_before > 0:
+                await asyncio.sleep(timed_msg.delay_before)
+            if i == 0 and update.message:
+                msg_object_a = await update.message.reply_html(text=timed_msg.text)
+            else:
+                msg_object_a = await context.bot.send_message(chat_id=chat_id, text=timed_msg.text, parse_mode=ParseMode.HTML)
+        logger.info(f"[Z1 Unified Flow] User {user_id}: Step A messages sent successfully.")
+        await asyncio.sleep(1.5) # Transition delay
 
-        await asyncio.sleep(1.5)
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.6)
-        message_text_2 = (
-            f"🔹 SECURE IDENTIFIER GENERATED\n"
-            f"→ USER_SECURE_ID: <code>{secure_id}</code>\n"
-            f"→ AUTH_LAYER: 2B | SYNC_STATUS: PENDING"
-        )
-        await update.message.reply_html(message_text_2)
+        # --- 【STEP B】DIAGNOSTIC REPORT & ACTION MANDATE ---
+        slot_id = _generate_script_id("SLT")
+        context.user_data["slot_id"] = slot_id
 
-        await asyncio.sleep(2.7)
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.6)
-        await update.message.reply_html(
-            "⚠️ INITIAL NODE ANALYSIS: CRITICAL WARNING\n"
-            "→ STABILITY RISK INDEX: 0.84 (ABOVE THRESHOLD)\n"
-            "→ TRACE_SIGNAL: NON-STANDARD ALIGNMENT"
-        )
-        await asyncio.sleep(4.5)
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.6)
-        await update.message.reply_html(
-            "🔒 SYSTEM ALERT: Your access node has entered a volatility state.\n"
-            "→ Interruption may trigger node quarantine protocol."
-        )
-        await asyncio.sleep(3.2)
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.6)
-        await update.message.reply_html(
-            "🧠 ACTION REQUIRED: Begin full TRACE_DIAGNOSTIC to determine node viability.\n"
-            "→ Delayed response = elevated risk of deactivation"
-        )
-        await asyncio.sleep(2.8)
-
-        keyboard = [
-            [InlineKeyboardButton("🧪 RUN TRACE_DIAGNOSTIC NOW ⚡️", callback_data=CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN)],
-            [InlineKeyboardButton("📄 VIEW SYSTEM PROTOCOL 📘", callback_data=CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW)],
-            [InlineKeyboardButton("⛔️ IGNORE SYSTEM WARNING (NOT RECOMMENDED)", callback_data=CALLBACK_S1_IGNORE_WARNING)]
+        messages_step_b = [
+            TimedMessage(text="<code>[LOG: Z1_SYS_DIAG_004]</code>\n📊🧠 [DIAGNOSTIC REPORT] <i>Critical failure</i> in node integrity.", delay_before=0.5),
+            TimedMessage(text="<code>[LOG: Z1_SYS_ACTION_005]</code>\n⚠️🔧 <b>[ACTION REQUIRED]</b> Immediate system intervention mandated.", delay_before=4.0),
+            TimedMessage(text=f"<code>[LOG: Z1_SYS_SLOT_006]</code>\n🔒🆔 [SLOT ID] <code>{slot_id}</code>", delay_before=4.0)
         ]
+        await send_delayed_sequence(bot=context.bot, chat_id=chat_id, sequence=messages_step_b, initial_delay=0.2)
+        logger.info(f"[Z1 Unified Flow] User {user_id}: Step B messages sent successfully.")
+        await asyncio.sleep(1.5) # Transition delay
+
+        # --- 【STEP C】LOCK SEQUENCE + ACCESS INITIATION ---
+        access_key = _generate_script_id("AKY")
+        context.user_data["access_key"] = access_key
+
+        messages_step_c_pre_button = [
+            TimedMessage(text=f"<code>[LOG: Z1_SYS_KEY_007]</code>\n🔑⏳ [ACCESS KEY] <b>{access_key}</b>", delay_before=0.5)
+        ]
+        text_c2_timer = ("<code>[LOG: Z1_SYS_TIMER_008]</code>\n"
+                         "⏰⚠️ [TIME REMAINING] <code>08:43 LEFT</code>") # Static timer
+
+        keyboard = [[
+            InlineKeyboardButton("🔓 UNLOCK & REPAIR ($49)", callback_data=CALLBACK_UNLOCK_REPAIR_49_UNIFIED)
+        ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-        await asyncio.sleep(0.5)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="SELECT ACTION:", reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        if messages_step_c_pre_button:
+            await send_delayed_sequence(bot=context.bot, chat_id=chat_id, sequence=messages_step_c_pre_button, initial_delay=0.2)
 
-        context.user_data["current_flow_step"] = AWAITING_STEP_1_BUTTON
-        logger.info(f"[Step ①] User {user_id}: current_flow_step set to {AWAITING_STEP_1_BUTTON}.")
-
-    except Exception as e:
-        logger.error(f"Error in start_step_1_flow for user {user_id}: {e}", exc_info=True)
-        await send_system_error_reply(update, context, user_id, "System communication error during initialization.")
-
-
-async def s1_initiate_diagnostic_scan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not query.message or not user:
-        if query: await query.answer()
-        return
-
-    user_id = user.id
-    context.user_data["user_id"] = user_id
-    logger.info(f"[Step ①] BUTTON_CLICK: User {user_id} clicked {CALLBACK_S1_INITIATE_DIAGNOSTIC_SCAN}")
-    await query.answer("Processing...")
-    try:
-        await query.edit_message_text(text="ACTION SELECTED: 🧪 RUN TRACE_DIAGNOSTIC NOW ⚡️", reply_markup=None)
-        diagnostic_sequence = [
-            TimedMessage(text="🔬 <b>TRACE_DIAGNOSTIC INITIATED...</b>\nAnalyzing node stability signatures...", delay_before=1.2),
-            TimedMessage(text="🧠 Analyzing ΔPrime vector clusters...", delay_before=2.8),
-            TimedMessage(text="📡 Signal drift detected... calibrating...", delay_before=2.4),
-            TimedMessage(text="✅ <b>DIAGNOSTIC PHASE 1 COMPLETE.</b>", delay_before=1.8, typing=False),
-            TimedMessage(text="<b>ALIGNMENT ANOMALIES DETECTED</b>\n\nYour node trace reveals core-misalignment clusters requiring deeper analysis.", delay_before=2.8),
-            TimedMessage(text="🧠 <b>Proceed to Step ②: TRACE_REPORT_Δ7</b> for critical breakdown.", delay_before=2.0),
-        ]
-        await send_delayed_sequence(context.bot, query.message.chat_id, diagnostic_sequence, initial_delay=0.8)
-        await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1.5)
-        keyboard_step2 = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ CONTINUE TO STEP ②", callback_data=CALLBACK_S2_FROM_DIAGNOSTIC)]])
-        await context.bot.send_message(chat_id=query.message.chat_id, text="Ready to continue?", reply_markup=keyboard_step2, parse_mode=ParseMode.HTML)
-        context.user_data["entry_point_s2"] = "from_diagnostic"
-        context.user_data["current_flow_step"] = AWAITING_STEP_2_FROM_DIAGNOSTIC
-        logger.info(f"[Step ①] User {user_id} completed diagnostic. Status set to: {AWAITING_STEP_2_FROM_DIAGNOSTIC}")
-    except Exception as e:
-        logger.error(f"Error in s1_initiate_diagnostic_scan_callback for user {user_id}: {e}", exc_info=True)
-        await send_system_error_reply(query, context, user_id, "An error occurred during diagnostic processing.")
-
-
-async def s1_view_protocol_overview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not query.message or not user:
-        if query: await query.answer()
-        return
-    user_id = user.id
-    context.user_data["user_id"] = user_id
-    logger.info(f"[Step ①] BUTTON_CLICK: User {user_id} clicked {CALLBACK_S1_VIEW_PROTOCOL_OVERVIEW}")
-    await query.answer()
-    try:
-        await query.edit_message_text(text="ACTION SELECTED: 📄 VIEW SYSTEM PROTOCOL 📘", reply_markup=None)
-        protocol_sequence_text = (
-            "📄 <b>System Protocol Overview (Simplified Extract)</b>:\n"
-            "<i>All access nodes are subject to periodic stability and alignment checks. "
-            "Non-standard signal patterns or deviations from baseline parameters (ΔPrime) "
-            "may indicate potential desynchronization risks. Active diagnostic measures are "
-            "recommended to ensure continued node viability and prevent automated quarantine protocols.</i>"
+        if await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING):
+            await asyncio.sleep(1.0)
+        
+        payment_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text_c2_timer,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
         )
-        protocol_sequence = [
-            TimedMessage(text=protocol_sequence_text, delay_before=1.0),
-            TimedMessage(text="🛡 System audit indicates non-standard signal detected on your node.", delay_before=2.8),
-            TimedMessage(text="⚠️ <b>SYSTEM FLAG ACTIVE.</b>\nYou are advised to proceed to Step ②.", delay_before=2.2),
-        ]
-        await send_delayed_sequence(context.bot, query.message.chat_id, protocol_sequence, initial_delay=0.5)
-        await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1.5)
-        keyboard_step2 = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ PROCEED TO STEP ②", callback_data=CALLBACK_S2_FROM_PROTOCOL)]])
-        await context.bot.send_message(chat_id=query.message.chat_id, text="Proceed when ready:", reply_markup=keyboard_step2, parse_mode=ParseMode.HTML)
-        context.user_data["entry_point_s2"] = "from_protocol"
-        context.user_data["current_flow_step"] = AWAITING_STEP_2_FROM_PROTOCOL
-        logger.info(f"[Step ①] User {user_id} viewed protocol. Status: {AWAITING_STEP_2_FROM_PROTOCOL}")
+        context.user_data["z1_payment_message_id"] = payment_message.message_id
+        context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_BUTTON_SHOWN
+        logger.info(f"[Z1 Unified Flow] User {user_id}: Step C messages and payment button sent. State: {FLOW_PAYMENT_BUTTON_SHOWN}")
+
+    except TelegramError as e:
+        logger.error(f"[Z1 Unified Flow] TelegramError for user {user_id}: {e}", exc_info=True)
+        await send_system_error_reply(update, context, user_id, f"System communication error (Code: TU_COMM_{e.__class__.__name__}). Please try /start again.")
     except Exception as e:
-        logger.error(f"Error in s1_view_protocol_overview_callback for user {user_id}: {e}", exc_info=True)
-        await send_system_error_reply(query, context, user_id, "An error occurred displaying protocol.")
+        logger.error(f"[Z1 Unified Flow] General error for user {user_id}: {e}", exc_info=True)
+        await send_system_error_reply(update, context, user_id, "An unexpected system error occurred (Code: TU_GEN). Please try /start again.")
 
 
-async def s1_ignore_warning_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_unlock_repair_callback_unified(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles the click on "🔓 UNLOCK & REPAIR ($49)" button in the unified flow.
+    """
     query = update.callback_query
     user = update.effective_user
-    if not query or not query.message or not user:
-        if query: await query.answer()
-        return
-    user_id = user.id
-    context.user_data["user_id"] = user_id
-    logger.info(f"[Step ①] BUTTON_CLICK: User {user_id} clicked {CALLBACK_S1_IGNORE_WARNING}")
-    await query.answer("Processing decision...")
-    try:
-        await query.edit_message_text(text="ACTION SELECTED: ⛔️ IGNORE SYSTEM WARNING", reply_markup=None)
-        user_secure_id = context.user_data.get("secure_id", "UNKNOWN_NODE")
-        ignore_sequence = [
-            TimedMessage(text=f"🔴 <b>WARNING IGNORED</b>\n<i>Node <code>{user_secure_id}</code> flagged for instability.</i>", delay_before=0.7, typing=False),
-            TimedMessage(text="🤖 <b>SYSTEM INTERVENTION ENGAGED</b>\nOverride protocol initializing...", delay_before=1.5),
-            TimedMessage(text="🔐 Enforcement directive issued. You are now subject to forced TRACE_DIAGNOSTIC.", delay_before=2.5),
-            TimedMessage(text="🚨 <b>Redirecting to Step ②: TRACE_REPORT_Δ7</b>", delay_before=2.0),
-        ]
-        await send_delayed_sequence(context.bot, query.message.chat_id, ignore_sequence, initial_delay=0.5)
-        await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1.6)
-        keyboard_step2 = InlineKeyboardMarkup([[InlineKeyboardButton("▶️ CONTINUE UNDER SYSTEM OVERRIDE", callback_data=CALLBACK_S2_FROM_IGNORE)]])
-        await context.bot.send_message(chat_id=query.message.chat_id, text="System will proceed on your behalf:", reply_markup=keyboard_step2, parse_mode=ParseMode.HTML)
-        context.user_data["entry_point_s2"] = "from_ignore"
-        context.user_data["ignored_critical_warning_step1"] = True
-        context.user_data["current_flow_step"] = AWAITING_STEP_2_FROM_IGNORE
-        logger.warning(f"[Step ①] User {user_id} ignored warning. Status: {AWAITING_STEP_2_FROM_IGNORE}")
-    except Exception as e:
-        logger.error(f"Error in s1_ignore_warning_callback for user {user_id}: {e}", exc_info=True)
-        await send_system_error_reply(query, context, user_id, "An error occurred processing your decision.")
 
-
-async def step_2_entry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user = update.effective_user
-    if not query or not query.message or not user:
-        if query: await query.answer("Error: Invalid callback.")
-        logger.warning("[Step ① Transition] step_2_entry_handler called with invalid query or user.")
+    if not query or not user or not query.message:
+        logger.warning("[Z1 Unified CB] Invalid callback query or missing user/message.")
+        if query: await query.answer("Error processing request.", show_alert=True)
         return
 
     user_id = user.id
-    context.user_data["user_id"] = user_id
-    logger.info(f"[Step ① Transition] User {user_id} clicked Step 2 entry button (cb_data: {query.data})")
-    await query.answer()
-    try:
-        source_entry = context.user_data.get("entry_point_s2", "unknown_s2_entry")
-        valid_entry_points = {"from_diagnostic", "from_protocol", "from_ignore"}
-        if source_entry not in valid_entry_points:
-            logger.warning(f"⚠️ User {user_id} attempted invalid Step ② entry point: {source_entry}. current_flow_step: {context.user_data.get('current_flow_step')}")
-            await send_system_error_reply(query, context, user_id, "Invalid entry into system diagnostic path. Please restart with /start.")
-            context.user_data.pop("current_flow_step", None)
-            context.user_data.pop("entry_point_s2", None)
-            return
+    chat_id = query.message.chat_id
+    message_id_to_edit = query.message.message_id
 
-        await query.edit_message_text(
-            text="✅ <b>STEP ① COMPLETE — Action Confirmed.</b>\n\n➡️ Proceeding to Step ②...",
-            reply_markup=None, parse_mode=ParseMode.HTML
+    logger.info(f"[Z1 Unified CB] User {user_id} clicked '{CALLBACK_UNLOCK_REPAIR_49_UNIFIED}'.")
+
+    if context.user_data.get("current_z1_unified_flow_state") != FLOW_PAYMENT_BUTTON_SHOWN:
+        logger.warning(f"[Z1 Unified CB] User {user_id} clicked button in unexpected state: {context.user_data.get('current_z1_unified_flow_state')}")
+        await query.answer("Request already processed or system is busy. Please wait.", show_alert=True)
+        return
+    
+    context.user_data["current_z1_unified_flow_state"] = FLOW_PROCESSING_PAYMENT
+
+    try:
+        await query.answer("Processing...")
+
+        original_text_html = query.message.text_html
+        new_text_html = f"{original_text_html}\n\n⏳ <b>Processing...</b>"
+        
+        await context.bot.edit_message_text(
+            text=new_text_html,
+            chat_id=chat_id,
+            message_id=message_id_to_edit,
+            reply_markup=None,
+            parse_mode=ParseMode.HTML
         )
-        await context.bot.send_chat_action(chat_id=query.message.chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(1.0)
+        logger.info(f"[Z1 Unified CB] User {user_id}: Payment button message updated to 'Processing...'.")
 
-        logger.info(f"[Step ① Transition] User {user_id} entering Step 2 from: {source_entry}")
-        opening_message_s2_text = ""
-        if source_entry == "from_ignore":
-            opening_message_s2_text = (
-                "⚠️ <b>SYSTEM OVERRIDE PROTOCOL ACTIVE.</b>\n"
-                "Your decision to bypass safety checks has been logged.\n"
-                "Forced alignment analysis underway via TRACE_REPORT_Δ7."
-            )
-            context.user_data["risk_score"] = 1.0
-        elif source_entry == "from_protocol":
-            opening_message_s2_text = (
-                "📘 <b>PROTOCOL ACKNOWLEDGED.</b>\n"
-                "Your review of system procedures is noted. "
-                "Proceeding with standard TRACE_REPORT_Δ7 analysis."
-            )
-            context.user_data["risk_score"] = 0.5
+        await asyncio.sleep(3.0) # Simulate payment verification
+
+        user_secure_id_final = context.user_data.get("user_secure_id", "N/A")
+        access_key_final = context.user_data.get("access_key", "N/A")
+        
+        final_confirmation_text = (
+            "<code>[LOG: Z1_SYS_PAYMENT_009_SUCCESS]</code>\n"
+            "✅ <b>AUTHORIZATION COMPLETE. PAYMENT RECEIVED.</b>\n\n"
+            "Your Z1-GRAY PROTOCOL Access Permission Matrix is now being compiled based on your unique Node ID and Access Key.\n"
+            f"Node ID: <code>{user_secure_id_final}</code>\n"
+            f"Access Key: <code>{access_key_final}</code>\n\n"
+            "➡️ You will receive your personalized Access Matrix documents (the 5 images/files) via a secure direct message or link within the next few minutes.\n\n"
+            "<i>Thank you for reactivating your node with Z1-GRAY PROTOCOL.</i>"
+        )
+        await context.bot.send_message(chat_id=chat_id, text=final_confirmation_text, parse_mode=ParseMode.HTML)
+        
+        context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_COMPLETE
+        logger.info(f"[Z1 Unified CB] User {user_id}: Simulated payment successful. Final message sent. State: {FLOW_PAYMENT_COMPLETE}")
+
+    except TelegramError as te:
+        if "message is not modified" in str(te).lower():
+            logger.warning(f"[Z1 Unified CB] User {user_id}: Message not modified (already processed). Error: {te}")
         else:
-            opening_message_s2_text = (
-                "🧠 <b>DIAGNOSTIC RESPONSE LOGGED.</b>\n"
-                "Launching TRACE_REPORT_Δ7 to trace alignment anomalies found in Phase 1."
-            )
-            context.user_data["risk_score"] = 0.2
-
-        step2_opening_sequence = [
-            TimedMessage(text=opening_message_s2_text, delay_before=1.5),
-            TimedMessage(
-                text="🧩 <b>STEP ②: TRACE_REPORT_Δ7 ANALYSIS</b> 🧩\n\n"
-                     "Scanning ΔPrime vectors...\n"
-                     "Correlating signal drift patterns...\n"
-                     "Please allow a moment for the system to compile the report.",
-                delay_before=1.8
-            )
-        ]
-        await send_delayed_sequence(context.bot, query.message.chat_id, step2_opening_sequence, initial_delay=0.2)
-        context.user_data["current_flow_step"] = STEP_2_STARTED_ANALYSIS
-        logger.info(f"[Step ① Transition] User {user_id} has started Step 2 analysis. Status: {STEP_2_STARTED_ANALYSIS}, Risk Score: {context.user_data.get('risk_score')}")
-
-        await execute_step_2_scan_sequence(update, context)
-
+            logger.error(f"[Z1 Unified CB] TelegramError for user {user_id}: {te}", exc_info=True)
+            await query.message.reply_text("A communication error occurred. Please contact support.")
+            context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_BUTTON_SHOWN # Revert state
     except Exception as e:
-        logger.error(f"Error in step_2_entry_handler for user {user_id}: {e}", exc_info=True)
-        await send_system_error_reply(query, context, user_id, "A system error occurred while proceeding to Step ②.")
+        logger.error(f"[Z1 Unified CB] General error for user {user_id}: {e}", exc_info=True)
+        await query.message.reply_text("An unexpected error occurred. Please contact support.")
+        context.user_data["current_z1_unified_flow_state"] = FLOW_PAYMENT_BUTTON_SHOWN # Revert state
