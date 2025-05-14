@@ -4,14 +4,15 @@ import logging
 import os
 import asyncio
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram import Update # Keep for consistency
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler # CallbackQueryHandler might be unused now
 
-# --- CRITICAL IMPORT CORRECTION: From handlers.step_1 ---
-from handlers.step_1 import start_main_unified_flow, handle_unified_payment_callback, CALLBACK_PROCESS_Z1_PAYMENT_FROM_STEP1
+# --- CRITICAL IMPORT: From handlers.step_1 ---
+# Only the main flow function is needed as the button is a URL link
+from handlers.step_1 import start_main_unified_flow
+# No callback handler or callback data constant needed from step_1.py if URL button is used
 
 # --- Environment Variable Logging ---
-# ... (这部分与您之前提供的一致，保持不变) ...
 print(f"CRITICAL_ENV_PRINT_AT_TOP: RENDER_EXTERNAL_URL='{os.environ.get('RENDER_EXTERNAL_URL')}'")
 print(f"CRITICAL_ENV_PRINT_AT_TOP: APP_ENV='{os.environ.get('APP_ENV')}'")
 print(f"CRITICAL_ENV_PRINT_AT_TOP: PORT='{os.environ.get('PORT')}'")
@@ -19,7 +20,6 @@ print(f"CRITICAL_ENV_PRINT_AT_TOP: TELEGRAM_BOT_TOKEN_EXISTS='{'SET' if os.envir
 print(f"CRITICAL_ENV_PRINT_AT_TOP: Z1_GRAY_SALT_EXISTS='{'SET' if os.environ.get('Z1_GRAY_SALT') else 'NOT_SET'}'")
 
 # --- Logging Configuration ---
-# ... (这部分与您之前提供的一致，保持不变) ...
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -29,18 +29,16 @@ logging.getLogger("telegram.ext").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- BOT Configuration ---
-# ... (这部分与您之前提供的一致，保持不变) ...
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     logger.critical("FATAL: TELEGRAM_BOT_TOKEN environment variable not set!")
     exit(1)
 
-BOT_VERSION = os.environ.get("BOT_VERSION", "2.1.1-import-fix") # Increment version
+BOT_VERSION = os.environ.get("BOT_VERSION", "2.2.1-final-perception") # Updated version
 APP_ENV = os.environ.get("APP_ENV", "development").lower()
 WEBHOOK_URL_BASE_FROM_ENV = os.environ.get("RENDER_EXTERNAL_URL")
 
 # --- Webhook/Polling URL Configuration ---
-# ... (这部分与您之前提供的一致，保持不变) ...
 if APP_ENV == "production":
     if not WEBHOOK_URL_BASE_FROM_ENV:
         logger.critical("FATAL: RENDER_EXTERNAL_URL is MISSING for production on Render!")
@@ -61,28 +59,25 @@ FULL_WEBHOOK_URL_FOR_TELEGRAM = f"{_cleaned_base}/{_cleaned_segment}" if _cleane
 
 DEFAULT_LOCAL_PORT = 8443
 PORT = int(os.environ.get("PORT", os.environ.get("WEBHOOK_PORT", DEFAULT_LOCAL_PORT)))
-ALLOWED_UPDATES_TYPES_STR_LIST = ["message", "callback_query"]
+ALLOWED_UPDATES_TYPES_STR_LIST = ["message", "callback_query"] # Keep callback_query if any other callbacks exist
 
 def main() -> None:
     logger.info(f"--- Starting Z1-Gray Bot (Version: {BOT_VERSION}) ---")
-    # ... (其他日志保持不变) ...
     logger.info(f"Application Environment (APP_ENV): {APP_ENV}")
     logger.info(f"Effective Port for Listener: {PORT}")
     logger.info(f"Bot Token Suffix: ...{BOT_TOKEN[-4:]}")
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # --- Register Handlers for the Unified Flow from step_1.py ---
-    # ✅ 使用从 handlers.step_1 导入的正确名称
+    # --- Register Handlers ---
     application.add_handler(CommandHandler("start", start_main_unified_flow))
-    application.add_handler(CallbackQueryHandler(
-        handle_unified_payment_callback,
-        pattern=f"^{CALLBACK_PROCESS_Z1_PAYMENT_FROM_STEP1}$"
-    ))
-    logger.info("Registered unified flow command and callback query handlers (from step_1.py).")
+    
+    # No CallbackQueryHandler for the main payment button as it's a URL button.
+    # If other callback buttons are added in the future, their handlers would be registered here.
+    
+    logger.info("Registered /start command handler (from handlers.step_1).")
 
     # --- Webhook/Polling Start Logic ---
-    # ... (这部分与您之前提供的一致，保持不变) ...
     try:
         if APP_ENV == "production":
             logger.info(f"Production mode: Initializing webhook application.")
@@ -97,7 +92,7 @@ def main() -> None:
                 allowed_updates=ALLOWED_UPDATES_TYPES_STR_LIST,
                 drop_pending_updates=True
             )
-        else:
+        else: 
             logger.info(f"Development mode: Initializing polling application.")
             async def _clear_webhook_for_dev(app: Application):
                 logger.info("Attempting to clear any existing webhook for development polling...")
@@ -110,7 +105,7 @@ def main() -> None:
             try:
                 loop = asyncio.get_running_loop()
                 asyncio.ensure_future(_clear_webhook_for_dev(application), loop=loop)
-            except RuntimeError:
+            except RuntimeError: 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(_clear_webhook_for_dev(application))
