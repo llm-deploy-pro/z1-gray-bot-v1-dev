@@ -70,22 +70,39 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         text_a1 = "<code>[LOG: Z1_SYS_ALERT_001]</code>\n🟥🟥🟧⬜⬜ <b>[SYSTEM ALERT]</b> Node anomaly detected."
         msg_delay_a1 = 1.2 - 0.3
+        
+        # Apply disruption delay before sending message
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before A1.")
+            await asyncio.sleep(delay_override)
+
         if update.message:
-            await send_delayed_message(context.bot, chat_id, text_a1, context=context, delay_before=msg_delay_a1, show_typing=False) # Pass context
+            await send_delayed_message(context.bot, chat_id, text_a1, delay_before=msg_delay_a1, show_typing=False) # NO context
         else:
-            await send_delayed_message(context.bot, chat_id, text_a1, context=context, delay_before=msg_delay_a1, show_typing=False) # Pass context
+            await send_delayed_message(context.bot, chat_id, text_a1, delay_before=msg_delay_a1, show_typing=False) # NO context
 
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
         await asyncio.sleep(1.2)
         text_a2 = "<code>[LOG: Z1_SYS_SCAN_002]</code>\n🧬📉 <code>[SCAN COMPLETE]</code> Threat level: <b>HIGH</b>."
         msg_delay_a2 = 3.2 - 1.2
-        await send_delayed_message(context.bot, chat_id, text_a2, context=context, delay_before=msg_delay_a2, show_typing=True) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before A2.")
+            await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_a2, delay_before=msg_delay_a2, show_typing=True) # NO context
 
         raw_secure_id = generate_user_secure_id(user_id)
         user_secure_id_display = f"USR-{raw_secure_id[:8]}"
         context.user_data["user_secure_id_z1_s1_v3"] = user_secure_id_display
         text_a3 = f"<code>[LOG: Z1_SYS_ID_003]</code>\n🧠🆔 [NODE ID] <b>{user_secure_id_display}</b>"
-        await send_delayed_message(context.bot, chat_id, text_a3, context=context, delay_before=3.2, show_typing=True) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before A3.")
+            await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_a3, delay_before=3.2, show_typing=True) # NO context
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Step A messages sent.")
 
         # --- 【STEP B】DIAGNOSTIC REPORT & ACTION MANDATE ---
@@ -97,7 +114,12 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
                    f"📊🧠 [DIAGNOSTIC REPORT] <i>Critical failure</i> in node integrity.\n"
                    f"<b>Status:</b> 🟥🟥🟥🟥🟧 (Integrity: <code>{integrity_val}%</code>)")
         msg_delay_b1 = 1.5 - 1.3
-        await send_delayed_message(context.bot, chat_id, text_b1, context=context, delay_before=msg_delay_b1, show_typing=True) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before B1.")
+            await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_b1, delay_before=msg_delay_b1, show_typing=True) # NO context
 
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VIDEO_NOTE)
         await asyncio.sleep(1.2)
@@ -107,16 +129,31 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
                    f"⚠️🔧 <b>[ACTION REQUIRED]</b> Immediate system intervention mandated.\n"
                    f"<i>System override: SLOT [<code>{slot_id}</code>] secured for immediate recalibration.</i>")
         msg_delay_b2 = 4.5 - 1.2
-        await send_delayed_message(context.bot, chat_id, text_b2, context=context, delay_before=msg_delay_b2, show_typing=True) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before B2.")
+            await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_b2, delay_before=msg_delay_b2, show_typing=True) # NO context
         
         node_echo_id = format(random.randint(0, SEED_MAX_VAL), '04X')
         context.user_data["node_echo_id_s1_v3"] = node_echo_id
         text_b2_echo = (f"<code>[SYS NODE AI::echo]</code> Node stabilization task [#{node_echo_id}] acknowledged.")
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        await send_delayed_message(context.bot, chat_id, text_b2_echo, context=context, delay_before=1.0, show_typing=False) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+           logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before B2_echo.")
+           await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_b2_echo, delay_before=1.0, show_typing=False) # NO context
 
         text_b3 = f"<code>[LOG: Z1_SYS_SLOT_006]</code>\n🔒🆔 [SLOT ID] <code>{slot_id}</code>"
-        await send_delayed_message(context.bot, chat_id, text_b3, context=context, delay_before=2.0, show_typing=True) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before B3.")
+            await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_b3, delay_before=2.0, show_typing=True) # NO context
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Step B messages (with AI echo) sent.")
 
         # --- 【STEP C】LOCK SEQUENCE + ACCESS INITIATION ---
@@ -135,7 +172,12 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
             f"KEY validation sequence initiated: <b>[Phase 1/3 Complete]</b>"
         )
         msg_delay_c1 = 1.8 - 1.2
-        await send_delayed_message(context.bot, chat_id, text_c1, context=context, delay_before=msg_delay_c1, show_typing=True) # Pass context
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+            logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before C1.")
+            await asyncio.sleep(delay_override)
+        await send_delayed_message(context.bot, chat_id, text_c1, delay_before=msg_delay_c1, show_typing=True) # NO context
 
         text_c2_with_button = (
             f"<b>⚠️ Activation Slot Reserved</b>\n"
@@ -153,7 +195,10 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         await asyncio.sleep(2.5)
         
-        # No need to pass context to context.bot.send_message directly
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+           logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before C2_button.")
+           await asyncio.sleep(delay_override)
         await context.bot.send_message(
             chat_id=chat_id,
             text=text_c2_with_button,
@@ -171,7 +216,11 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
             "✅ <b>Link confirmed</b>. Finalizing your session on the secure gateway...\n"
             "Please complete the process on the opened page."
         )
-        # No need to pass context to context.bot.send_message directly
+        
+        delay_override = context.user_data.pop("input_disruption_delay_s", 0)
+        if delay_override > 0:
+           logger.info(f"[Unified Z1 Flow S1 V3] Applying input disruption delay of {delay_override}s for user {user_id} before GatewayConfirm.")
+           await asyncio.sleep(delay_override)
         await context.bot.send_message(chat_id=chat_id, text=text_gateway_confirmation_msg, parse_mode=ParseMode.HTML)
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Sent 'Link confirmed' gateway message.")
 
@@ -198,7 +247,7 @@ async def handle_unexpected_input(update: Update, context: ContextTypes.DEFAULT_
 
     valid_interrupt_states = [
         UNIFIED_FLOW_ACTIVE,
-        UNIFIED_FLOW_PAYMENT_LINK_SENT
+        UNIFIED_FLOW_PAYMENT_LINK_SENT 
     ]
 
     if current_state not in valid_interrupt_states:
@@ -212,7 +261,6 @@ async def handle_unexpected_input(update: Update, context: ContextTypes.DEFAULT_
         "<code>[LOG: Z1_ECHO_MON]</code> 🧠 External signal received.<br>"
         "<b>Manual input logged. Processing will resume once current protocol completes.</b>"
     )
-    # No need to pass context to context.bot.send_message directly
     await context.bot.send_message(
         chat_id=chat_id,
         text=reply_text_html,
@@ -222,7 +270,7 @@ async def handle_unexpected_input(update: Update, context: ContextTypes.DEFAULT_
     logger.info(f"[Unexpected Input] Sent Z1_ECHO_MON reply to user {user_id}.")
 
     disruption_delay_seconds = 3.0
-    context.user_data["input_disruption_delay_s"] = disruption_delay_seconds # Key for disruption delay
+    context.user_data["input_disruption_delay_s"] = disruption_delay_seconds
     logger.info(f"[Unexpected Input] Set input_disruption_delay_s to {disruption_delay_seconds}s for user {user_id}.")
 
 
