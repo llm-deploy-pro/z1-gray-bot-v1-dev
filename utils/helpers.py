@@ -48,6 +48,7 @@ async def send_delayed_message(
     bot, # Typically context.bot
     chat_id: int,
     text: str,
+    # context: ContextTypes.DEFAULT_TYPE, # REMOVED context from here
     delay_before: float = 0.0, # Default to 0 if external sleep is primary
     show_typing: bool = True, # Can be overridden by caller
     parse_mode: Union[str, None] = ParseMode.HTML,
@@ -57,6 +58,7 @@ async def send_delayed_message(
     """
     Helper to send a single message with optional delay and typing.
     The `delay_before` here is AFTER any externally controlled ChatAction delays.
+    The input_disruption_delay_s logic is handled by the caller in step_1.py.
     """
     try:
         if show_typing and delay_before > 0.2: # Only show typing if there's a noticeable delay *for this message*
@@ -85,6 +87,7 @@ async def send_delayed_sequence(
     bot,
     chat_id: int,
     sequence: List[TimedMessage],
+    # context: ContextTypes.DEFAULT_TYPE, # REMOVED context from here
     initial_delay: float = 0
 ) -> List[Union[Message, None]]:
     """Sends a sequence of TimedMessage objects."""
@@ -93,10 +96,11 @@ async def send_delayed_sequence(
         await asyncio.sleep(initial_delay)
 
     for item in sequence:
-        sent_msg = await send_delayed_message(
+        sent_msg = await send_delayed_message( # context is no longer passed here
             bot=bot,
             chat_id=chat_id,
             text=item.text,
+            # context=context, # REMOVED
             delay_before=item.delay_before,
             show_typing=item.typing,
             parse_mode=item.parse_mode,
@@ -203,7 +207,7 @@ def get_display_name(user_obj: Any) -> str:
     return "User (no identifiable info)"
 
 async def edit_message_safely(
-    context: ContextTypes.DEFAULT_TYPE,
+    context_param: ContextTypes.DEFAULT_TYPE, # Renamed to avoid conflict with module
     chat_id: int,
     message_id: int,
     new_text: str,
@@ -213,7 +217,7 @@ async def edit_message_safely(
 ) -> bool:
     """Safely attempts to edit a message, handling common errors like 'message is not modified'."""
     try:
-        await context.bot.edit_message_text(
+        await context_param.bot.edit_message_text( # Use context_param
             text=new_text,
             chat_id=chat_id,
             message_id=message_id,

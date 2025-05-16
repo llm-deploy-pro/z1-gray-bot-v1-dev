@@ -1,4 +1,4 @@
-# handlers/step_1.py (Final Optimized Version)
+# handlers/step_1.py (This file now contains the UNIFIED 3-step flow WITH TIMING ADJUSTMENTS and FINAL ENHANCEMENTS)
 
 import asyncio
 import logging
@@ -55,7 +55,7 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         keys_to_clear = [
             current_flow_state_key, "user_secure_id_z1_s1_v3", "slot_id_z1_s1_v3", 
             "access_key_z1_s1_v3", "integrity_value_s1_v3", "sync_seed_s1_v3", 
-            "node_echo_id_s1_v3", "checksum_val_s1_v3"
+            "node_echo_id_s1_v3", "checksum_val_s1_v3" # Ensured all relevant keys are listed
         ]
         for key in keys_to_clear:
             context.user_data.pop(key, None)
@@ -69,24 +69,23 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         await asyncio.sleep(0.3)
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         text_a1 = "<code>[LOG: Z1_SYS_ALERT_001]</code>\n🟥🟥🟧⬜⬜ <b>[SYSTEM ALERT]</b> Node anomaly detected."
-        # delay_before for send_delayed_message is relative to the TYPING action ending
-        msg_delay_a1 = 1.2 - 0.3 # Total desired delay - ChatAction sleep
+        msg_delay_a1 = 1.2 - 0.3
         if update.message:
-            await send_delayed_message(context.bot, chat_id, text_a1, delay_before=msg_delay_a1, show_typing=False)
+            await send_delayed_message(context.bot, chat_id, text_a1, context=context, delay_before=msg_delay_a1, show_typing=False) # Pass context
         else:
-            await send_delayed_message(context.bot, chat_id, text_a1, delay_before=msg_delay_a1, show_typing=False)
+            await send_delayed_message(context.bot, chat_id, text_a1, context=context, delay_before=msg_delay_a1, show_typing=False) # Pass context
 
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VOICE)
         await asyncio.sleep(1.2)
         text_a2 = "<code>[LOG: Z1_SYS_SCAN_002]</code>\n🧬📉 <code>[SCAN COMPLETE]</code> Threat level: <b>HIGH</b>."
         msg_delay_a2 = 3.2 - 1.2
-        await send_delayed_message(context.bot, chat_id, text_a2, delay_before=msg_delay_a2, show_typing=True) # Let helper handle typing for this segment
+        await send_delayed_message(context.bot, chat_id, text_a2, context=context, delay_before=msg_delay_a2, show_typing=True) # Pass context
 
         raw_secure_id = generate_user_secure_id(user_id)
         user_secure_id_display = f"USR-{raw_secure_id[:8]}"
         context.user_data["user_secure_id_z1_s1_v3"] = user_secure_id_display
         text_a3 = f"<code>[LOG: Z1_SYS_ID_003]</code>\n🧠🆔 [NODE ID] <b>{user_secure_id_display}</b>"
-        await send_delayed_message(context.bot, chat_id, text_a3, delay_before=3.2, show_typing=True)
+        await send_delayed_message(context.bot, chat_id, text_a3, context=context, delay_before=3.2, show_typing=True) # Pass context
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Step A messages sent.")
 
         # --- 【STEP B】DIAGNOSTIC REPORT & ACTION MANDATE ---
@@ -98,7 +97,7 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
                    f"📊🧠 [DIAGNOSTIC REPORT] <i>Critical failure</i> in node integrity.\n"
                    f"<b>Status:</b> 🟥🟥🟥🟥🟧 (Integrity: <code>{integrity_val}%</code>)")
         msg_delay_b1 = 1.5 - 1.3
-        await send_delayed_message(context.bot, chat_id, text_b1, delay_before=msg_delay_b1, show_typing=True)
+        await send_delayed_message(context.bot, chat_id, text_b1, context=context, delay_before=msg_delay_b1, show_typing=True) # Pass context
 
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.RECORD_VIDEO_NOTE)
         await asyncio.sleep(1.2)
@@ -108,16 +107,16 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
                    f"⚠️🔧 <b>[ACTION REQUIRED]</b> Immediate system intervention mandated.\n"
                    f"<i>System override: SLOT [<code>{slot_id}</code>] secured for immediate recalibration.</i>")
         msg_delay_b2 = 4.5 - 1.2
-        await send_delayed_message(context.bot, chat_id, text_b2, delay_before=msg_delay_b2, show_typing=True)
+        await send_delayed_message(context.bot, chat_id, text_b2, context=context, delay_before=msg_delay_b2, show_typing=True) # Pass context
         
         node_echo_id = format(random.randint(0, SEED_MAX_VAL), '04X')
         context.user_data["node_echo_id_s1_v3"] = node_echo_id
         text_b2_echo = (f"<code>[SYS NODE AI::echo]</code> Node stabilization task [#{node_echo_id}] acknowledged.")
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING) # Standard typing for echo
-        await send_delayed_message(context.bot, chat_id, text_b2_echo, delay_before=1.0, show_typing=False) # Typing already sent
+        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        await send_delayed_message(context.bot, chat_id, text_b2_echo, context=context, delay_before=1.0, show_typing=False) # Pass context
 
         text_b3 = f"<code>[LOG: Z1_SYS_SLOT_006]</code>\n🔒🆔 [SLOT ID] <code>{slot_id}</code>"
-        await send_delayed_message(context.bot, chat_id, text_b3, delay_before=2.0, show_typing=True) # Adjusted delay after echo
+        await send_delayed_message(context.bot, chat_id, text_b3, context=context, delay_before=2.0, show_typing=True) # Pass context
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Step B messages (with AI echo) sent.")
 
         # --- 【STEP C】LOCK SEQUENCE + ACCESS INITIATION ---
@@ -136,24 +135,25 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
             f"KEY validation sequence initiated: <b>[Phase 1/3 Complete]</b>"
         )
         msg_delay_c1 = 1.8 - 1.2
-        await send_delayed_message(context.bot, chat_id, text_c1, delay_before=msg_delay_c1, show_typing=True)
+        await send_delayed_message(context.bot, chat_id, text_c1, context=context, delay_before=msg_delay_c1, show_typing=True) # Pass context
 
         text_c2_with_button = (
             f"<b>⚠️ Activation Slot Reserved</b>\n"
             f"Only <code>1</code> access slot remains for your Node ID.\n\n"
             f"<code>[LOG: Z1_SYS_TIMER_008]</code>\n"
             f"⏰⚠️ [TIME REMAINING] <code>08:43 LEFT</code>\n\n"
-            f"<b>Note:</b> Action cannot be reversed once initiated.\n\n" # Ensure newline for spacing
-            f"<i>Clicking below will open a secure payment portal for your activation.</i>" # A1 modification
+            f"<b>Note:</b> Action cannot be reversed once initiated.\n\n"
+            f"<i>Clicking below will open a secure payment portal for your activation.</i>"
         )
         gumroad_url = "https://syncprotocol.gumroad.com/l/ENTRY_SYNC_49"
         keyboard_c2 = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔗 ENTER SECURE PORTAL – $49", url=gumroad_url) # A2 modification
+            InlineKeyboardButton("🔗 ENTER SECURE PORTAL – $49", url=gumroad_url)
         ]])
 
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
-        await asyncio.sleep(2.5) # Extended pause before button
+        await asyncio.sleep(2.5)
         
+        # No need to pass context to context.bot.send_message directly
         await context.bot.send_message(
             chat_id=chat_id,
             text=text_c2_with_button,
@@ -163,7 +163,6 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         context.user_data[current_flow_state_key] = UNIFIED_FLOW_PAYMENT_LINK_SENT
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Step C payment URL button sent.")
 
-        # B1 modification: Follow-up message after URL button
         await asyncio.sleep(2.8) 
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
         await asyncio.sleep(1.0)
@@ -172,6 +171,7 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
             "✅ <b>Link confirmed</b>. Finalizing your session on the secure gateway...\n"
             "Please complete the process on the opened page."
         )
+        # No need to pass context to context.bot.send_message directly
         await context.bot.send_message(chat_id=chat_id, text=text_gateway_confirmation_msg, parse_mode=ParseMode.HTML)
         logger.info(f"[Unified Z1 Flow S1 V3] User {user_id}: Sent 'Link confirmed' gateway message.")
 
@@ -182,4 +182,48 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"[Unified Z1 Flow S1 V3] General error for user {user_id}: {e}", exc_info=True)
         await send_system_error_reply(update, context, user_id, error_code="S1V3_GENERR", custom_error_text="An unexpected error occurred.")
 
-logger.info("handlers.step_1 (unified flow v3 with final button optimizations) module loaded.")
+# --- Function to handle unexpected user text input during the flow ---
+async def handle_unexpected_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_chat or not update.effective_user:
+        logger.warning("handle_unexpected_input: Received update without crucial attributes.")
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    text_received = update.message.text
+    logger.info(f"[Unexpected Input] User {user_id} in chat {chat_id} sent text during flow: '{text_received[:50]}'")
+
+    current_flow_state_key = "current_z1_unified_flow_s1_v3_state"
+    current_state = context.user_data.get(current_flow_state_key)
+
+    valid_interrupt_states = [
+        UNIFIED_FLOW_ACTIVE,
+        UNIFIED_FLOW_PAYMENT_LINK_SENT
+    ]
+
+    if current_state not in valid_interrupt_states:
+        logger.info(f"[Unexpected Input] User {user_id} sent text but not in an active Z1-Gray flow state ({current_state}). Ignoring.")
+        return
+
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    await asyncio.sleep(0.8) 
+
+    reply_text_html = (
+        "<code>[LOG: Z1_ECHO_MON]</code> 🧠 External signal received.<br>"
+        "<b>Manual input logged. Processing will resume once current protocol completes.</b>"
+    )
+    # No need to pass context to context.bot.send_message directly
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=reply_text_html,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True
+    )
+    logger.info(f"[Unexpected Input] Sent Z1_ECHO_MON reply to user {user_id}.")
+
+    disruption_delay_seconds = 3.0
+    context.user_data["input_disruption_delay_s"] = disruption_delay_seconds # Key for disruption delay
+    logger.info(f"[Unexpected Input] Set input_disruption_delay_s to {disruption_delay_seconds}s for user {user_id}.")
+
+
+logger.info("handlers.step_1 (unified flow v3 with final enhancements and input handling) module loaded.")
