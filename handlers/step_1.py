@@ -45,6 +45,20 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
     chat_id = update.effective_chat.id
     context.user_data["user_id"] = user_id
 
+    # AI_MODIFIED_BLOCK_START: Added logging for context.args (start payload)
+    args = context.args  # This will be a list of strings after /start, e.g., ['payload_from_lp']
+    entry_source_payload = "direct_start_or_unknown" # Default value
+
+    if args:
+        start_payload = args[0] # Get the first argument as the payload
+        entry_source_payload = start_payload # Store the actual payload
+        logger.info(f"[BOT_START_HANDLER] User {user_id} (Chat: {chat_id}) started with payload: '{start_payload}' from context.args[0]. Full args: {args}")
+        context.user_data['entry_source'] = start_payload # Store in user_data
+    else:
+        logger.info(f"[BOT_START_HANDLER] User {user_id} (Chat: {chat_id}) started without a payload (direct /start or unknown source).")
+        context.user_data['entry_source'] = entry_source_payload # Store default in user_data
+    # AI_MODIFIED_BLOCK_END
+
     current_flow_state_key = "current_z1_unified_flow_s1_v3_state" # Unique state key
     current_flow_state = context.user_data.get(current_flow_state_key)
 
@@ -60,7 +74,8 @@ async def start_main_unified_flow(update: Update, context: ContextTypes.DEFAULT_
         for key in keys_to_clear:
             context.user_data.pop(key, None)
 
-    logger.info(f"[Unified Z1 Flow S1 V3] User {user_id} (Chat: {chat_id}) starting script with final button optimizations.")
+    # Original log now includes the entry_source from the payload or default
+    logger.info(f"[Unified Z1 Flow S1 V3] User {user_id} (Chat: {chat_id}, Source: {entry_source_payload}) starting script with final button optimizations.")
     context.user_data[current_flow_state_key] = UNIFIED_FLOW_ACTIVE
 
     try:
