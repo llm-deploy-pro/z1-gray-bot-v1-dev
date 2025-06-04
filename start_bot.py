@@ -5,12 +5,16 @@ import os
 import asyncio
 
 from telegram import Update # Keep for consistency
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler # CallbackQueryHandler might be unused now
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters # Added MessageHandler and filters
 
 # --- CRITICAL IMPORT: From handlers.step_1 ---
 # Only the main flow function is needed as the button is a URL link
 from handlers.step_1 import start_main_unified_flow
 # No callback handler or callback data constant needed from step_1.py if URL button is used
+
+# AI_MODIFIED_BLOCK_START: Import the new user input handler
+from handlers.user_input_handler import handle_user_text_message
+# AI_MODIFIED_BLOCK_END
 
 # --- Environment Variable Logging ---
 print(f"CRITICAL_ENV_PRINT_AT_TOP: RENDER_EXTERNAL_URL='{os.environ.get('RENDER_EXTERNAL_URL')}'")
@@ -77,6 +81,16 @@ def main() -> None:
     
     logger.info("Registered /start command handler (from handlers.step_1).")
 
+    # AI_MODIFIED_BLOCK_START: Add the new handler for user's free text input
+    # This handler will catch any text message that is NOT a command.
+    # It's generally good practice to add more general handlers (like this MessageHandler for text)
+    # after more specific ones (like CommandHandlers or other specific MessageHandlers/ConversationHandlers).
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_message)
+    )
+    logger.info("Registered user_input_handler for general text messages.")
+    # AI_MODIFIED_BLOCK_END
+    
     # --- Webhook/Polling Start Logic ---
     try:
         if APP_ENV == "production":
